@@ -1,0 +1,862 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>First Day · LP Copy Studio</title>
+<style>
+  :root{
+    --bg:#f6f4ef; --panel:#ffffff; --ink:#1d1b16; --muted:#6b6559;
+    --line:#e7e2d8; --accent:#ff5a3c; --accent-ink:#fff;
+    --good:#1a9d5a; --warn:#c98a00; --bad:#d63b2f;
+    --chip:#f0ece2; --shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.06);
+    --radius:14px; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{--bg:#161410;--panel:#201d18;--ink:#f3efe6;--muted:#a49c8c;--line:#332f27;
+      --chip:#2a261f;--shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.35);}
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  a{color:var(--accent)}
+  button{font-family:inherit}
+  header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:14px;
+    padding:12px 20px;background:color-mix(in srgb,var(--panel) 88%,transparent);
+    backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.2px}
+  .dot{width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;
+    display:grid;place-items:center;font-weight:800;font-size:13px}
+  .brand small{font-weight:500;color:var(--muted)}
+  .sync{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--muted)}
+  .sync b{color:var(--ink)}
+  .status-dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+  .status-dot.ok{background:var(--good)} .status-dot.err{background:var(--bad)} .status-dot.load{background:var(--warn);animation:pulse 1s infinite}
+  @keyframes pulse{50%{opacity:.35}}
+  .btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);
+    padding:8px 13px;border-radius:10px;cursor:pointer;font-weight:600;font-size:13px;transition:.12s}
+  .btn:hover{border-color:var(--accent)}
+  .btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+  .btn.primary:hover{filter:brightness(1.05)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn.ghost{background:transparent}
+  main{display:grid;grid-template-columns:340px 1fr 320px;gap:16px;padding:16px 20px;max-width:1500px;margin:0 auto}
+  @media(max-width:1200px){main{grid-template-columns:1fr}}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+  .panel h2{margin:0;padding:14px 16px 6px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+  .panel .body{padding:6px 16px 16px}
+  label.field{display:block;margin:12px 0 4px;font-weight:600;font-size:12.5px}
+  label.field span{color:var(--muted);font-weight:500}
+  select,input,textarea{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:10px;
+    background:var(--bg);color:var(--ink);font:inherit;font-size:13.5px}
+  textarea{resize:vertical;min-height:64px}
+  select:focus,input:focus,textarea:focus{outline:2px solid color-mix(in srgb,var(--accent) 40%,transparent);border-color:var(--accent)}
+  .composition{margin-top:6px;font-size:12px;color:var(--muted);background:var(--chip);border-radius:8px;padding:7px 10px}
+  .composition b{color:var(--ink)}
+  .row{display:flex;gap:8px}
+  .row>*{flex:1}
+  .actions{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+  .hint{font-size:12px;color:var(--muted);margin-top:8px}
+  .pill{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:var(--chip);color:var(--muted);margin-left:6px}
+  .pill.main{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent)}
+  .problem-list{display:flex;flex-direction:column;gap:6px;max-height:230px;overflow:auto;margin-top:4px}
+  .problem-list label{display:flex;gap:9px;align-items:flex-start;margin:0;font-size:13px;font-weight:500;
+    background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:8px 11px;cursor:pointer;transition:.12s}
+  .problem-list label:hover{border-color:var(--accent)}
+  .problem-list label:has(input:checked){border-color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,var(--bg))}
+  .problem-list input{width:auto;flex:none;margin:2px 0 0;accent-color:var(--accent)}
+  .problem-list .star{color:var(--accent);font-weight:700}
+  .problem-list .none{color:var(--muted);font-size:12.5px;padding:6px 2px}
+  /* output */
+  #out .body{min-height:200px}
+  .empty{color:var(--muted);text-align:center;padding:48px 20px}
+  .empty svg{opacity:.3}
+  .gate{display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:12px;font-weight:700;margin-bottom:14px}
+  .gate.pass{background:color-mix(in srgb,var(--good) 15%,transparent);color:var(--good)}
+  .gate.fail{background:color-mix(in srgb,var(--bad) 14%,transparent);color:var(--bad)}
+  .copyblock{white-space:pre-wrap;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:16px;font-size:14.5px;line-height:1.6}
+  .copyblock h1,.copyblock h2,.copyblock h3{margin:.4em 0 .2em}
+  .section-title{font-weight:700;margin:20px 0 8px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-weight:600}
+  .score{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:6px;font-weight:800;color:#fff;font-size:12px}
+  .s0{background:var(--bad)} .s1{background:var(--warn)} .s2{background:var(--good)}
+  .check{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;font-size:12px;color:#fff}
+  .check.y{background:var(--good)} .check.n{background:var(--bad)}
+  .ref h3{font-size:12.5px;margin:14px 0 6px;font-weight:700}
+  .ref .item{font-size:12.5px;border-left:2px solid var(--line);padding:2px 0 2px 10px;margin:6px 0;color:var(--muted)}
+  .ref .item b{color:var(--ink);font-weight:600}
+  .nutri{font-family:var(--mono);font-size:11px;white-space:pre-wrap;color:var(--muted);max-height:160px;overflow:auto}
+  details summary{cursor:pointer;font-weight:600;font-size:12.5px;margin-top:10px}
+  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);
+    padding:10px 16px;border-radius:10px;font-size:13px;box-shadow:var(--shadow);opacity:0;transition:.2s;pointer-events:none;z-index:50}
+  .toast.show{opacity:1}
+  .spinner{width:18px;height:18px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;display:inline-block;vertical-align:middle}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .keyrow{display:flex;gap:8px;align-items:center;margin-top:6px}
+  .keyrow input{flex:1}
+  code.mini{font-family:var(--mono);background:var(--chip);padding:1px 5px;border-radius:5px;font-size:12px}
+  /* review board */
+  table.review td{vertical-align:top}
+  table.review td.linecell{min-width:220px}
+  .rv-note{width:100%;min-height:42px;font-size:12.5px;padding:6px 8px}
+  .rv-accept{width:18px;height:18px;accent-color:var(--good);cursor:pointer}
+  .tag{display:inline-block;font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:6px;background:var(--chip);color:var(--muted)}
+  .tag.bad{background:color-mix(in srgb,var(--bad) 16%,transparent);color:var(--bad)}
+  .drafts{display:flex;flex-direction:column;gap:10px;margin-top:10px}
+  .draft-card{display:flex;gap:12px;align-items:center;justify-content:space-between;
+    border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--bg)}
+  .draft-main{min-width:0} .draft-act{display:flex;gap:8px;flex:none}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="dot">FD</span> LP Copy Studio <small>· First Day copy quality system</small></div>
+  <div class="sync">
+    <span class="status-dot" id="statusDot"></span>
+    <span id="statusText">Not synced</span>
+    <button class="btn ghost" id="draftsBtn">📋 Drafts<span class="pill" id="draftCount">0</span></button>
+    <button class="btn ghost" id="syncBtn">↻ Sync sheet</button>
+  </div>
+</header>
+
+<main>
+  <!-- LEFT: BRIEF -->
+  <section class="panel" id="briefPanel">
+    <h2>Brief</h2>
+    <div class="body">
+      <label class="field">Template</label>
+      <select id="template"></select>
+      <div class="composition" id="composition">Pick a template to see its composition.</div>
+
+      <label class="field">Product / segment</label>
+      <select id="product"></select>
+
+      <label class="field">Problems / angles <span>· ★ = primary · pick one or more</span></label>
+      <div id="problemList" class="problem-list"></div>
+
+      <div class="row">
+        <div>
+          <label class="field">Channel</label>
+          <select id="channel">
+            <option>Landing page</option><option>Amazon</option>
+            <option>Meta ad</option><option>Email</option>
+          </select>
+        </div>
+      </div>
+
+      <label class="field">Working title / angle <span>· required</span></label>
+      <input id="title" placeholder="e.g. Why Parents Love First Day Multivitamins" />
+
+      <label class="field">The big promise <span>· blank = AI infers &amp; declares it</span></label>
+      <textarea id="promise" placeholder="The single thing this page promises the buyer's life."></textarea>
+
+      <div class="actions">
+        <button class="btn primary" id="genBtn" disabled>Generate copy</button>
+        <button class="btn" id="promptBtn" disabled>Copy full prompt</button>
+      </div>
+      <div class="hint" id="briefHint">Sync the sheet to load templates, products &amp; evidence.</div>
+
+      <label class="field">Your name <span>· shown on the reviews you accept</span></label>
+      <input id="reviewer" placeholder="e.g. Alex T." autocomplete="off" />
+
+      <details id="apiDetails">
+        <summary>Settings</summary>
+        <label class="field">Model</label>
+        <select id="model">
+          <option value="claude-sonnet-5">Claude Sonnet 5 (balanced)</option>
+          <option value="claude-opus-4-8">Claude Opus 4.8 (highest quality)</option>
+          <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (fast)</option>
+        </select>
+        <label class="field">Access token <span>· only if this deployment is protected</span></label>
+        <div class="keyrow">
+          <input id="apiKey" type="password" placeholder="team access token (optional)" autocomplete="off" />
+          <button class="btn" id="saveKey">Save</button>
+        </div>
+        <div class="hint">The Anthropic key now lives on the server — no key needed here. Set an access token only if your admin enabled <code class="mini">APP_ACCESS_TOKEN</code>. <b>Copy full prompt</b> always works offline.</div>
+      </details>
+    </div>
+  </section>
+
+  <!-- CENTER: OUTPUT -->
+  <section class="panel" id="out">
+    <h2>Output <span id="outMeta"></span></h2>
+    <div class="body" id="outBody">
+      <div class="empty">
+        <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>
+        <p>Build a brief and generate. Copy is scored against every ACTIVE rule; nothing ships with a failing gate.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- RIGHT: EVIDENCE -->
+  <section class="panel ref" id="evidence">
+    <h2>Evidence library</h2>
+    <div class="body" id="evBody"><div class="empty" style="padding:24px">Grounding facts appear here once you pick a product.</div></div>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+/* ---------- Sheet config ---------- */
+const SHEET = "2PACX-1vTcXtnCQmnoP0ey_I6iO8geOcaQ9AzFcwlAyb14NSNpz1YZIKd_MKOBD4qZJxfsPv6hzcyDqeXkVSmZ";
+const csvUrl = gid => `https://docs.google.com/spreadsheets/d/e/${SHEET}/pub?gid=${gid}&single=true&output=csv`;
+const TABS = {
+  readme:       464700131,
+  templates:    79462607,
+  lp_checks:    1079814289,
+  copy_checks:  0,
+  problems:     1069573550,
+  claims:       2136371716,   // headline / approved claims
+  stats:        983419641,    // statistic claims
+  reviews:      1508492577,   // testimonials
+  factsheet:    1762791970,   // products + nutrients
+  site_copy:    1208737255
+};
+const COMPETITORS = ["SmartyPants","Hiya","Olly","Flintstones","Ritual"];
+
+const STATE = { raw:{}, templates:[], products:[], problemsByProduct:{}, fact:{}, synced:false };
+
+/* ---------- CSV parser (handles quotes, commas, embedded newlines, "" escapes) ---------- */
+function parseCSV(text){
+  const rows=[]; let row=[], field="", i=0, q=false;
+  text = text.replace(/\r\n/g,"\n").replace(/\r/g,"\n");
+  while(i<text.length){
+    const c=text[i];
+    if(q){
+      if(c==='"'){ if(text[i+1]==='"'){field+='"';i++;} else q=false; }
+      else field+=c;
+    } else {
+      if(c==='"') q=true;
+      else if(c===',' ){ row.push(field); field=""; }
+      else if(c==='\n'){ row.push(field); rows.push(row); row=[]; field=""; }
+      else field+=c;
+    }
+    i++;
+  }
+  if(field.length||row.length){ row.push(field); rows.push(row); }
+  return rows;
+}
+const clean = s => (s||"").trim();
+// normalize product names so sheet variations ("™", curly quotes, spacing) still match
+const norm = s => (s||"").toLowerCase().replace(/[™®"'"'`]/g,"").replace(/\s+/g," ").trim();
+
+/* ---------- Sync ---------- */
+async function fetchTab(gid){
+  const res = await fetch(csvUrl(gid), {redirect:"follow"});
+  if(!res.ok) throw new Error("HTTP "+res.status);
+  return parseCSV(await res.text());
+}
+async function syncSheet(){
+  setStatus("load","Syncing…");
+  try{
+    const entries = Object.entries(TABS);
+    const results = await Promise.all(entries.map(([,gid])=>fetchTab(gid).catch(e=>({__err:e.message}))));
+    entries.forEach(([name],idx)=>{ STATE.raw[name]=results[idx]; });
+    buildModel();
+    populateUI();
+    STATE.synced=true;
+    const ts=new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+    setStatus("ok", `Synced ${STATE.templates.length} templates · ${STATE.products.length} products · ${ts}`);
+    refreshButtons();
+  }catch(e){
+    setStatus("err","Sync failed: "+e.message);
+  }
+}
+function setStatus(kind,text){
+  document.getElementById("statusDot").className="status-dot "+(kind||"");
+  document.getElementById("statusText").textContent=text;
+}
+
+/* ---------- Build model from raw rows ---------- */
+function rowsAsObjects(rows){
+  if(!rows||rows.length<2) return [];
+  const head=rows[0].map(clean);
+  return rows.slice(1).filter(r=>r.some(c=>clean(c))).map(r=>{
+    const o={}; head.forEach((h,i)=>o[h]=clean(r[i])); return o;
+  });
+}
+function buildModel(){
+  // templates
+  STATE.templates = rowsAsObjects(STATE.raw.templates||[]).map(o=>({
+    name:o.Template, composition:o.Composition
+  })).filter(t=>t.name);
+
+  // rules (kept as-is, only ACTIVE)
+  STATE.lpChecks   = rowsAsObjects(STATE.raw.lp_checks||[]).filter(r=>/active/i.test(r.Status||""));
+  STATE.copyChecks = rowsAsObjects(STATE.raw.copy_checks||[]).filter(r=>/active/i.test(r.Status||""));
+
+  // problems by product
+  const pbp={}; const prodOrder=[];
+  (STATE.raw.problems||[]).slice(1).forEach(r=>{
+    const prod=clean(r[0]), prob=clean(r[1]), main=/^y/i.test(clean(r[2]));
+    if(!prod||!prob) return;
+    if(!pbp[prod]){ pbp[prod]=[]; prodOrder.push(prod); }
+    pbp[prod].push({problem:prob, main});
+  });
+  STATE.problemsByProduct=pbp;
+  STATE.products=prodOrder;
+
+  // fact sheet by product
+  const fact={};
+  rowsAsObjects(STATE.raw.factsheet||[]).forEach(o=>{
+    const prod=o["Product Name"]; if(!prod) return;
+    fact[prod]={ productId:o["Product ID"], variantId:o["Variant ID"], sku:o.SKU,
+      nutrients:o.Nutrients, link:o.Link };
+  });
+  STATE.fact=fact;
+  // make sure products that only appear in fact sheet are selectable too
+  Object.keys(fact).forEach(p=>{ if(!STATE.products.includes(p)) STATE.products.push(p); });
+
+  // claims / stats / reviews as positional [product, problem, claim, status, notes, source]
+  const pack = rows => (rows||[]).slice(1).map(r=>({
+    product:clean(r[0]), problem:clean(r[1]), text:clean(r[2]),
+    status:clean(r[3]), notes:clean(r[4]), source:clean(r[5])
+  })).filter(x=>x.text);
+  STATE.claims  = pack(STATE.raw.claims);
+  STATE.stats   = pack(STATE.raw.stats);
+  STATE.reviews = pack(STATE.raw.reviews);
+}
+
+/* ---------- Populate UI ---------- */
+function fill(sel, items, fmt){
+  sel.innerHTML="";
+  items.forEach(it=>{ const o=document.createElement("option");
+    const v = fmt?fmt(it):it; o.value=v.value; o.innerHTML=v.label; sel.appendChild(o); });
+}
+function populateUI(){
+  const tSel=document.getElementById("template");
+  fill(tSel, STATE.templates, t=>({value:t.name,label:t.name}));
+  updateComposition();
+
+  const pSel=document.getElementById("product");
+  fill(pSel, STATE.products, p=>({value:p,label:p}));
+  updateProblems();
+  updateEvidence();
+}
+function updateComposition(){
+  const t=STATE.templates.find(x=>x.name===val("template"));
+  document.getElementById("composition").innerHTML =
+    t ? `<b>${esc(t.name)}</b> → ${esc(t.composition||"—")}` : "—";
+}
+function updateProblems(){
+  const prod=val("product");
+  const list=(STATE.problemsByProduct[prod]||[]);
+  const el=document.getElementById("problemList");
+  if(!list.length){ el.innerHTML='<div class="none">(no problems listed for this product)</div>'; return; }
+  // primary angles (★) are pre-checked as a sensible default; any combination can be picked or cleared
+  el.innerHTML = list.map(x=>
+    `<label><input type="checkbox" class="problem-cb" value="${esc(x.problem)}"${x.main?" checked":""}>`
+    +`<span>${esc(x.problem)}${x.main?' <span class="star">★</span>':''}</span></label>`
+  ).join("");
+  el.querySelectorAll(".problem-cb").forEach(cb=>cb.onchange=updateEvidence);
+}
+// the problems/angles currently ticked, in sheet order
+function selectedProblems(){
+  return [...document.querySelectorAll("#problemList .problem-cb:checked")].map(cb=>cb.value);
+}
+
+/* ---------- Evidence for selected product + problem ---------- */
+function evidenceFor(prod, probs){
+  const np=norm(prod);
+  const nqs=(Array.isArray(probs)?probs:[probs]).map(norm).filter(Boolean);
+  const match = arr => arr.filter(x=>norm(x.product)===np);
+  const isSel = x => nqs.includes(norm(x.problem));
+  const bias = list => { // rows matching any selected problem first, then the rest
+    const a=list.filter(isSel), b=list.filter(x=>!isSel(x));
+    return [...a,...b];
+  };
+  return {
+    fact: STATE.fact[prod] || Object.values(STATE.fact).find(f=>norm(f_prodName(f))===np) || null,
+    claims: bias(match(STATE.claims)),
+    stats:  bias(match(STATE.stats)),
+    reviews:bias(match(STATE.reviews))
+  };
+}
+function f_prodName(){return "";} // placeholder (fact keyed by name already)
+function updateEvidence(){
+  const prod=val("product"), probs=selectedProblems();
+  const ev=evidenceFor(prod,probs);
+  const el=document.getElementById("evBody");
+  const f=STATE.fact[prod];
+  let h="";
+  if(f){
+    h+=`<h3>Fact sheet · ${esc(prod)}</h3>`;
+    h+=`<div class="item">SKU <b>${esc(f.sku||"—")}</b> · Product ID <b>${esc(f.productId||"—")}</b></div>`;
+    h+=`<div class="nutri">${esc(f.nutrients||"—")}</div>`;
+  }
+  const block=(title,arr)=>{
+    if(!arr.length) return "";
+    let s=`<h3>${title} <span class="pill">${arr.length}</span></h3>`;
+    arr.slice(0,6).forEach(x=>{ s+=`<div class="item"><b>${esc(x.problem||"—")}</b><br>${esc(x.text)}${x.source?`<br><span style="opacity:.7">src: ${esc(x.source)}</span>`:""}</div>`; });
+    return s;
+  };
+  h+=block("Approved claims", ev.claims);
+  h+=block("Statistics", ev.stats);
+  h+=block("Reviews", ev.reviews);
+  el.innerHTML = h || '<div class="empty" style="padding:24px">No evidence rows matched this product.</div>';
+}
+
+/* ---------- Prompt assembly (faithful to sheet README workflow) ---------- */
+function ruleLines(rules){
+  return rules.map(r=>{
+    const parts=[`  ${r["Rule ID"]} — ${r["Rule Name"]}: ${r["Scoring Procedure"]}`];
+    if(r["Score 0 ="]) parts.push(`      0=${r["Score 0 ="]} · 1=${r["Score 1 ="]} · 2=${r["Score 2 ="]}`);
+    if(r["Deterministic Assist"]) parts.push(`      Assist: ${r["Deterministic Assist"]}`);
+    if(r["Fix Instruction Template"]) parts.push(`      Fix: ${r["Fix Instruction Template"]}`);
+    return parts.join("\n");
+  }).join("\n");
+}
+function buildBrief(){
+  return {
+    template: val("template"),
+    composition: (STATE.templates.find(t=>t.name===val("template"))||{}).composition||"",
+    product: val("product"),
+    problems: selectedProblems(),
+    channel: val("channel"),
+    title: val("title").trim(),
+    promise: val("promise").trim()
+  };
+}
+function buildPrompt(){
+  const b=buildBrief();
+  const ev=evidenceFor(b.product,b.problems);
+  const f=STATE.fact[b.product];
+  const evTxt=(label,arr)=>arr.length?`\n${label}:\n`+arr.map(x=>`  - [${x.problem||"general"}] ${x.text}${x.source?`  (source: ${x.source})`:""}`).join("\n"):"";
+
+  const system =
+`You are the copy engine for First Day, a Bio-Matched children's multivitamin brand. You write and self-score landing-page copy against a fixed quality system. You NEVER invent facts, studies, dosages, or ingredient claims — if the fact sheet doesn't support a claim, you cut the claim. When a rule and the brief conflict, you flag it rather than silently choosing.
+
+WORKFLOW (run every step):
+1. Read the brief. Identify audience, product, channel, and the declared or inferred big promise. If the promise is blank, infer ONE, state it explicitly, and score against it.
+2. Draft copy in the template's composition, building in every LP content requirement from the start.
+3. Score line-by-line with the Copy Checks (0/1/2 each), applying each deterministic assist.
+4. Hard dependency: any claim scoring 2 on "Can you falsify it?" MUST map to a Fact Sheet ID, or the compliance gate blocks it regardless of score.
+5. Run the competitor swap test against: ${COMPETITORS.join(", ")}. If a line survives the swap, rewrite it around a First-Day-only asset.
+6. Revise failing spans with the fix templates and re-score until no rule scores 0 and the gate passes.
+
+LP CONTENT REQUIREMENTS (must all be present):
+${ruleLines(STATE.lpChecks)}
+
+COPY CHECKS (score every line 0/1/2):
+${ruleLines(STATE.copyChecks)}
+
+PASS CRITERIA: all LP requirements present; no Copy Check at 0 (target 2s, justify any 1s); every falsifiable claim traceable to a fact-sheet line; nothing a competitor could equally say survives.`;
+
+  const user =
+`BRIEF
+  Template: ${b.template} — composition: ${b.composition}
+  Product: ${b.product}
+  Problems / angles: ${b.problems.length?b.problems.join("; ")+(b.problems.length>1?"  (address every one; lead with the first, weave the rest)":""):"(none specified)"}
+  Channel: ${b.channel}
+  Working title: ${b.title||"(none — derive one)"}
+  Big promise: ${b.promise||"(BLANK — infer one, declare it, score against it)"}
+
+FACT SHEET (the ONLY source for dosages/ingredients — cite by SKU/Product ID):
+${f?`  Product: ${b.product}\n  SKU: ${f.sku} · Product ID: ${f.productId} · Variant ID: ${f.variantId}\n  Nutrients:\n${(f.nutrients||"").split("\n").map(l=>"    "+l).join("\n")}`:"  (no fact sheet row found for this product — do not fabricate dosages)"}
+
+APPROVED EVIDENCE (reuse verbatim or tighten; do not exceed what's here):${evTxt("Approved claims",ev.claims)}${evTxt("Statistics",ev.stats)}${evTxt("Reviews / testimonials",ev.reviews)}
+
+CREDIBILITY ANCHORS you may cite: Advisory board (Dr. Lei Chen, Yale; Dr. Ed Giovannucci, Harvard); third-party testing; Clean Label Project certification; the 35,000-study review; 45-day guarantee.
+DIFFERENTIATION assets: No Junk(TM), Real Wholesome(R), Bio-Matched mechanism, methylfolate / Cognizin(R) / Suntheanine(R) / Livaux(R) / SNZ 1969(R), segment-specific dosing, the 3-in-1 system.
+
+Return the final copy plus your scoring. If calling the emit_copy tool, populate every field. Otherwise return a single JSON object with keys: big_promise_used, inferred_promise (bool), copy (markdown), lp_checks [{id,name,present,evidence}], copy_checks [{id,name,score,justification,fix_applied}], claim_mapping [{claim,fact_sheet_id}], competitor_swap [{line,survives,rewrite}], compliance_gate {pass,blockers[]}, notes.`;
+
+  return {system, user, brief:b};
+}
+
+/* ---------- Structured output tool schema ---------- */
+const TOOL = {
+  name:"emit_copy",
+  description:"Return the final landing-page copy with per-rule scoring and the compliance gate.",
+  input_schema:{ type:"object", properties:{
+    big_promise_used:{type:"string"},
+    inferred_promise:{type:"boolean"},
+    copy:{type:"string", description:"Final copy in the template composition, markdown."},
+    lp_checks:{type:"array", items:{type:"object", properties:{
+      id:{type:"string"},name:{type:"string"},present:{type:"boolean"},evidence:{type:"string"}},
+      required:["id","present"]}},
+    copy_checks:{type:"array", items:{type:"object", properties:{
+      id:{type:"string"},name:{type:"string"},score:{type:"integer",enum:[0,1,2]},
+      justification:{type:"string"},fix_applied:{type:"string"}}, required:["id","score"]}},
+    claim_mapping:{type:"array", items:{type:"object", properties:{
+      claim:{type:"string"},fact_sheet_id:{type:"string"}}, required:["claim"]}},
+    competitor_swap:{type:"array", items:{type:"object", properties:{
+      line:{type:"string"},survives:{type:"boolean"},rewrite:{type:"string"}}, required:["line","survives"]}},
+    compliance_gate:{type:"object", properties:{
+      pass:{type:"boolean"}, blockers:{type:"array",items:{type:"string"}}}, required:["pass"]},
+    notes:{type:"string"}
+  }, required:["copy","lp_checks","copy_checks","compliance_gate"]}
+};
+
+/* ---------- Live generation (via the server-side /api/generate proxy) ---------- */
+async function generate(){
+  const {system,user,brief}=buildPrompt();
+  STATE.lastBrief=brief;
+  const model=val("model");
+  setOut(`<div class="empty"><span class="spinner"></span><p>Generating &amp; scoring with ${esc(model)}…</p></div>`);
+  document.getElementById("outMeta").textContent="";
+  try{
+    const r=await api("/api/generate",{method:"POST",body:JSON.stringify({system,user,model})});
+    renderResult(r, model);
+  }catch(e){
+    setOut(`<div class="gate fail">⚠︎ Generation failed</div>
+      <div class="copyblock" style="border-color:var(--bad)">${esc(e.message)}</div>
+      <p class="hint">If this mentions the key isn't configured, set <code class="mini">ANTHROPIC_API_KEY</code> in Vercel. You can always <b>Copy full prompt</b> and paste into Claude instead.</p>`);
+  }
+}
+
+/* ---------- Render structured result ---------- */
+function renderResult(r, model){
+  STATE.lastCopy=r.copy||"";
+  const gate=r.compliance_gate||{pass:false,blockers:["No gate returned"]};
+  let h="";
+  h+=`<div class="gate ${gate.pass?"pass":"fail"}">${gate.pass?"✓ Compliance gate PASSED":"✗ Compliance gate BLOCKED"}${
+      gate.blockers&&gate.blockers.length?` — ${esc(gate.blockers.join("; "))}`:""}</div>`;
+  if(r.big_promise_used) h+=`<div class="hint" style="margin-bottom:10px">Big promise${r.inferred_promise?" (inferred)":""}: <b>${esc(r.big_promise_used)}</b></div>`;
+
+  h+=`<div class="section-title">Final copy</div><div class="copyblock">${mdToHtml(r.copy||"")}</div>
+      <div class="actions">
+        <button class="btn primary" onclick="reviewCopy()">Send for line-by-line review</button>
+        <button class="btn" onclick="copyText(${JSON.stringify(JSON.stringify(r.copy||"")).replace(/"/g,'&quot;')})">Copy text</button>
+        <button class="btn" onclick="copyReviewPrompt()">Copy review prompt</button>
+      </div>`;
+
+  if(r.lp_checks?.length){
+    h+=`<div class="section-title">LP content requirements</div><table><tr><th>#</th><th>Requirement</th><th>Present</th><th>Evidence</th></tr>`;
+    r.lp_checks.forEach(c=>h+=`<tr><td>${esc(c.id||"")}</td><td>${esc(c.name||"")}</td>
+      <td><span class="check ${c.present?"y":"n"}">${c.present?"✓":"✕"}</span></td><td>${esc(c.evidence||"")}</td></tr>`);
+    h+=`</table>`;
+  }
+  if(r.copy_checks?.length){
+    h+=`<div class="section-title">Copy checks (0 / 1 / 2)</div><table><tr><th>#</th><th>Check</th><th>Score</th><th>Justification / fix</th></tr>`;
+    r.copy_checks.forEach(c=>h+=`<tr><td>${esc(c.id||"")}</td><td>${esc(c.name||"")}</td>
+      <td><span class="score s${c.score}">${c.score}</span></td>
+      <td>${esc(c.justification||"")}${c.fix_applied?`<br><i>fix: ${esc(c.fix_applied)}</i>`:""}</td></tr>`);
+    h+=`</table>`;
+  }
+  if(r.claim_mapping?.length){
+    h+=`<div class="section-title">Claim → fact sheet</div><table><tr><th>Claim</th><th>Fact sheet ID</th></tr>`;
+    r.claim_mapping.forEach(c=>h+=`<tr><td>${esc(c.claim||"")}</td><td><code class="mini">${esc(c.fact_sheet_id||"—")}</code></td></tr>`);
+    h+=`</table>`;
+  }
+  if(r.competitor_swap?.length){
+    h+=`<div class="section-title">Competitor swap test</div><table><tr><th>Line</th><th>Survives?</th><th>Rewrite</th></tr>`;
+    r.competitor_swap.forEach(c=>h+=`<tr><td>${esc(c.line||"")}</td>
+      <td><span class="check ${c.survives?"n":"y"}">${c.survives?"✕":"✓"}</span></td><td>${esc(c.rewrite||"")}</td></tr>`);
+    h+=`</table>`;
+  }
+  if(r.notes) h+=`<div class="section-title">Notes</div><p class="hint">${esc(r.notes)}</p>`;
+  setOut(h);
+  document.getElementById("outMeta").textContent = model?`· ${model}`:"";
+}
+
+/* ---------- Independent reviewer agent ---------- */
+const REVIEW_TOOL = {
+  name:"emit_review",
+  description:"Return an independent holistic + line-by-line review of the landing-page copy.",
+  input_schema:{ type:"object", properties:{
+    holistic:{type:"object", properties:{
+      score:{type:"integer", minimum:0, maximum:100},
+      verdict:{type:"string", description:"one word: Strong / Mixed / Weak"},
+      summary:{type:"string"},
+      strengths:{type:"array", items:{type:"string"}},
+      risks:{type:"array", items:{type:"string"}}
+    }, required:["score","summary"]},
+    lines:{type:"array", items:{type:"object", properties:{
+      line:{type:"string", description:"the copy line, verbatim"},
+      type:{type:"string", description:"headline / subhead / body / bullet / cta / etc"},
+      score:{type:"integer", enum:[0,1,2]},
+      rubric_flags:{type:"array", items:{type:"string"}},
+      grounded:{type:"boolean", description:"true if every falsifiable claim in the line is supported by provided evidence"},
+      fact_sheet_id:{type:"string"},
+      notes:{type:"string"},
+      suggested_rewrite:{type:"string", description:"evidence-safe rewrite, or blank if none is possible without new facts"}
+    }, required:["line","score","notes"]}},
+    overall_compliance:{type:"object", properties:{
+      pass:{type:"boolean"}, blockers:{type:"array", items:{type:"string"}}}, required:["pass"]}
+  }, required:["holistic","lines","overall_compliance"]}
+};
+function buildReviewPrompt(copy, brief){
+  brief = brief || {};
+  const ev=evidenceFor(brief.product, brief.problems||[]);
+  const f=STATE.fact[brief.product];
+  const evTxt=(label,arr)=>arr.length?`\n${label}:\n`+arr.map(x=>`  - [${x.problem||"general"}] ${x.text}${x.source?`  (source: ${x.source})`:""}`).join("\n"):"";
+  const system =
+`You are an INDEPENDENT copy reviewer for First Day, a Bio-Matched children's multivitamin brand. You did NOT write this copy — your job is to critique and score it, not to defend it or rewrite it wholesale. You score ONLY against the quality rubric and the evidence given below.
+
+HARD RULES:
+- NO hallucination. Never introduce a fact, dosage, study, statistic, or ingredient claim that is not in the provided Fact Sheet or Approved Evidence. Do not look anything up and do not assume.
+- If a line makes a falsifiable claim not supported by the provided evidence, set grounded=false, say so in notes, and score accordingly.
+- Any suggested_rewrite must stay strictly within the provided evidence. If a line cannot be fixed without new facts, leave suggested_rewrite blank and explain in notes.
+- Quote each line verbatim from the copy. Do not merge or paraphrase lines.
+
+TASKS:
+1. Holistic review of the whole page: score 0-100, a one-word verdict (Strong / Mixed / Weak), a short summary, key strengths, key risks.
+2. Line-by-line: split the copy into its individual lines/blocks (headline, subheads, body lines, bullets, CTAs). For each: quote it verbatim, classify its type, score it 0/1/2 with the Copy Checks, list the rubric checks that drove the score, mark grounded plus the Fact Sheet ID for any falsifiable claim, give concise notes, and an evidence-safe rewrite (or blank).
+3. Overall compliance gate: pass/fail + blockers. Hard rule: any falsifiable claim scoring 2 MUST map to a Fact Sheet ID, or the gate fails.
+
+LP CONTENT REQUIREMENTS (should all be present):
+${ruleLines(STATE.lpChecks||[])}
+
+COPY CHECKS (score every line 0/1/2):
+${ruleLines(STATE.copyChecks||[])}
+
+Competitor swap test brands: ${COMPETITORS.join(", ")}.`;
+
+  const user =
+`LANDING PAGE UNDER REVIEW
+  Title: ${brief.title||"(untitled)"}
+  Product: ${brief.product}
+  Problems / angles: ${(brief.problems&&brief.problems.length)?brief.problems.join("; "):"(none specified)"}
+  Template: ${brief.template} · Channel: ${brief.channel}
+
+COPY (review exactly this — do not invent sections that aren't here):
+"""
+${copy}
+"""
+
+FACT SHEET (the ONLY source for dosages/ingredients):
+${f?`  Product: ${brief.product}\n  SKU: ${f.sku} · Product ID: ${f.productId} · Variant ID: ${f.variantId}\n  Nutrients:\n${(f.nutrients||"").split("\n").map(l=>"    "+l).join("\n")}`:"  (no fact sheet row — any dosage/ingredient claim is ungrounded)"}
+
+APPROVED EVIDENCE (the only claims/stats/reviews that count as grounded):${evTxt("Approved claims",ev.claims)}${evTxt("Statistics",ev.stats)}${evTxt("Reviews / testimonials",ev.reviews)}
+
+Return your review via the emit_review tool, populating every field.`;
+  return {system, user};
+}
+async function reviewCopy(){
+  if(!STATE.lastCopy){ toast("Generate copy first, then send it for review."); return; }
+  const {system,user}=buildReviewPrompt(STATE.lastCopy, STATE.lastBrief);
+  const model=val("model");
+  setOut(`<div class="empty"><span class="spinner"></span><p>Independent reviewer scoring the page holistically &amp; line by line…</p></div>`);
+  document.getElementById("outMeta").textContent="";
+  try{
+    const review=await api("/api/review",{method:"POST",body:JSON.stringify({system,user,model})});
+    const draft=await api("/api/drafts",{method:"POST",body:JSON.stringify({brief:STATE.lastBrief, copy:STATE.lastCopy, review, model})});
+    await renderReviewBoard(draft.id, draft);
+    updateDraftCount();
+    toast("Saved as a shared review draft");
+  }catch(e){
+    setOut(`<div class="gate fail">⚠︎ Review failed</div>
+      <div class="copyblock" style="border-color:var(--bad)">${esc(e.message)}</div>
+      <p class="hint">You can also <b>Copy review prompt</b> and run it in Claude.</p>`);
+  }
+}
+function copyReviewPrompt(){
+  if(!STATE.lastCopy){ toast("Generate copy first."); return; }
+  const {system,user}=buildReviewPrompt(STATE.lastCopy, STATE.lastBrief);
+  navigator.clipboard.writeText(`===== REVIEWER SYSTEM =====\n${system}\n\n===== COPY TO REVIEW =====\n${user}`);
+  toast("Review prompt copied — paste into Claude");
+}
+
+/* ---------- API client (server holds the key; Postgres holds the shared drafts) ---------- */
+function reviewerName(){ return (localStorage.getItem("fd_reviewer")||"").trim(); }
+function apiHeaders(){
+  const h={"content-type":"application/json"};
+  const t=localStorage.getItem("fd_app_token");
+  if(t) h["x-app-token"]=t;
+  return h;
+}
+async function api(path, opts){
+  const res=await fetch(path, {headers:apiHeaders(), ...(opts||{})});
+  let data={}; try{ data=await res.json(); }catch(e){}
+  if(!res.ok) throw new Error(data.error||("HTTP "+res.status));
+  return data;
+}
+function fetchDrafts(){ return api("/api/drafts"); }
+function fetchDraft(id){ return api("/api/drafts/"+encodeURIComponent(id)); }
+function removeDraft(id){ return api("/api/drafts/"+encodeURIComponent(id), {method:"DELETE"}); }
+function patchLine(id, idx, row){
+  return api("/api/drafts/"+encodeURIComponent(id), {method:"PATCH",
+    body:JSON.stringify({ idx, accepted:!!row.accepted, reviewerNotes:row.reviewerNotes||"", reviewedBy:reviewerName() })});
+}
+async function updateDraftCount(){
+  const el=document.getElementById("draftCount"); if(!el) return;
+  try{ const list=await fetchDrafts(); el.textContent=list.length; }catch(e){ el.textContent="!"; }
+}
+
+/* ---------- Review board + drafts list ---------- */
+async function renderDraftsList(){
+  document.getElementById("outMeta").textContent="· drafts";
+  setOut(`<div class="empty"><span class="spinner"></span><p>Loading shared drafts…</p></div>`);
+  let list;
+  try{ list=await fetchDrafts(); }
+  catch(e){ setOut(`<div class="gate fail">⚠︎ Couldn't load drafts</div><div class="copyblock" style="border-color:var(--bad)">${esc(e.message)}</div>`); return; }
+  let h=`<div class="section-title">Review drafts <span class="pill">${list.length}</span></div>`;
+  if(!list.length){
+    h+=`<div class="empty">No review drafts yet.<br>Generate copy, then hit <b>Send for line-by-line review</b>.</div>`;
+    setOut(h); return;
+  }
+  h+=`<div class="drafts">`;
+  list.forEach(d=>{
+    const hol=d.holistic||{};
+    h+=`<div class="draft-card">
+      <div class="draft-main">
+        <b>${esc(d.brief.title||"(untitled)")}</b>
+        <div class="hint">${esc(d.brief.product||"")}${d.brief.problems&&d.brief.problems.length?" · "+esc(d.brief.problems.join(", ")):""}</div>
+        <div class="hint">${esc(new Date(d.createdAt).toLocaleString())} · ${d.lineCount} lines · ${d.acceptedCount} accepted · holistic ${hol.score!=null?esc(hol.score)+"/100":"—"}</div>
+      </div>
+      <div class="draft-act">
+        <button class="btn" data-open="${esc(d.id)}">Open</button>
+        <button class="btn ghost" data-del="${esc(d.id)}">Delete</button>
+      </div></div>`;
+  });
+  h+=`</div>`;
+  setOut(h);
+  document.querySelectorAll("[data-open]").forEach(b=>b.onclick=()=>renderReviewBoard(b.dataset.open));
+  document.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{
+    if(!confirm("Delete this review draft? This cannot be undone.")) return;
+    try{ await removeDraft(b.dataset.del); toast("Draft deleted"); renderDraftsList(); }
+    catch(e){ toast("Delete failed: "+e.message); }
+  });
+}
+async function renderReviewBoard(id, preloaded){
+  document.getElementById("outMeta").textContent="· review draft";
+  if(!preloaded) setOut(`<div class="empty"><span class="spinner"></span><p>Loading draft…</p></div>`);
+  let d=preloaded;
+  if(!d){ try{ d=await fetchDraft(id); }catch(e){ setOut(`<div class="gate fail">⚠︎ ${esc(e.message)}</div>`); return; } }
+  STATE.openDraft=d;
+  const hol=d.review.holistic||{}, gate=d.review.overall_compliance||{pass:false,blockers:[]};
+  const noteTimers={};
+  let h="";
+  h+=`<div class="actions" style="margin:0 0 12px">
+        <button class="btn ghost" id="rvBack">← Drafts</button>
+        <button class="btn" id="rvCsv">Export CSV</button>
+        <button class="btn" id="rvDel">Delete draft</button>
+      </div>`;
+  h+=`<div class="hint">Shared review draft · <b>${esc(d.brief.title||"(untitled)")}</b> · ${esc(d.brief.product||"")} · ${esc(new Date(d.createdAt).toLocaleString())} · ${esc(d.model||"")}</div>`;
+  h+=`<div class="gate ${gate.pass?"pass":"fail"}" style="margin-top:12px">${gate.pass?"✓ Compliance gate PASSED":"✗ Compliance gate BLOCKED"}${gate.blockers&&gate.blockers.length?` — ${esc(gate.blockers.join("; "))}`:""}</div>`;
+  h+=`<div class="section-title">Holistic review <span class="pill">${hol.score!=null?esc(hol.score)+"/100":"—"}</span>${hol.verdict?` <span class="pill main">${esc(hol.verdict)}</span>`:""}</div>`;
+  if(hol.summary) h+=`<p>${esc(hol.summary)}</p>`;
+  if(hol.strengths&&hol.strengths.length) h+=`<p class="hint"><b>Strengths:</b> ${esc(hol.strengths.join(" · "))}</p>`;
+  if(hol.risks&&hol.risks.length) h+=`<p class="hint"><b>Risks:</b> ${esc(hol.risks.join(" · "))}</p>`;
+
+  h+=`<div class="section-title">Line-by-line — you fill the last two columns</div>`;
+  h+=`<div style="overflow-x:auto"><table class="review">
+      <tr><th>#</th><th>Line</th><th>Type</th><th>Score</th><th>Agent notes</th><th>Suggested rewrite</th><th>Accept</th><th>Reviewer notes</th></tr>`;
+  d.rows.forEach((r,i)=>{
+    const ground = r.grounded===false ? `<br><span class="tag bad">ungrounded</span>`
+                 : (r.fact_sheet_id?`<br><code class="mini">${esc(r.fact_sheet_id)}</code>`:"");
+    h+=`<tr>
+      <td>${i+1}</td>
+      <td class="linecell">${esc(r.line||"")}${ground}</td>
+      <td>${r.type?`<span class="tag">${esc(r.type)}</span>`:""}</td>
+      <td><span class="score s${r.score}">${r.score!=null?r.score:"—"}</span></td>
+      <td>${esc(r.notes||"")}${r.flags&&r.flags.length?`<br><span class="hint">${esc(r.flags.join(", "))}</span>`:""}</td>
+      <td>${r.suggested_rewrite?esc(r.suggested_rewrite):'<span class="hint">—</span>'}</td>
+      <td style="text-align:center"><input type="checkbox" class="rv-accept" data-i="${i}"${r.accepted?" checked":""}></td>
+      <td><textarea class="rv-note" data-i="${i}" placeholder="your notes…">${esc(r.reviewerNotes||"")}</textarea>
+          <div class="hint rv-by" data-i="${i}">${r.reviewedBy?"— "+esc(r.reviewedBy):""}</div></td>
+    </tr>`;
+  });
+  h+=`</table></div>`;
+  h+=`<div class="hint" style="margin-top:12px">Accepts &amp; notes save to the shared database for everyone. This draft never edits the master sheet — promote accepted lines by updating the sheet manually, then delete the draft.</div>`;
+  setOut(h);
+
+  const save=(i)=>patchLine(d.id,i,d.rows[i]).then(()=>{
+      const by=document.querySelector(`.rv-by[data-i="${i}"]`);
+      if(by) by.textContent = reviewerName()? "— "+reviewerName() : "";
+      if(reviewerName()) d.rows[i].reviewedBy=reviewerName();
+    });
+  document.getElementById("rvBack").onclick=renderDraftsList;
+  document.getElementById("rvCsv").onclick=()=>exportDraftCSV(d);
+  document.getElementById("rvDel").onclick=async()=>{
+    if(!confirm("Delete this review draft? This cannot be undone.")) return;
+    try{ await removeDraft(d.id); toast("Draft deleted"); renderDraftsList(); }
+    catch(e){ toast("Delete failed: "+e.message); }
+  };
+  document.querySelectorAll(".rv-accept").forEach(cb=>cb.onchange=()=>{
+    const i=+cb.dataset.i; d.rows[i].accepted=cb.checked;
+    save(i).then(()=>toast("Saved")).catch(e=>{ cb.checked=!cb.checked; d.rows[i].accepted=cb.checked; toast("Save failed: "+e.message); });
+  });
+  document.querySelectorAll(".rv-note").forEach(ta=>ta.oninput=()=>{
+    const i=+ta.dataset.i; d.rows[i].reviewerNotes=ta.value;
+    clearTimeout(noteTimers[i]);
+    noteTimers[i]=setTimeout(()=>save(i).catch(e=>toast("Save failed: "+e.message)), 700);
+  });
+}
+function exportDraftCSV(d){
+  if(!d) return;
+  const q=s=>`"${String(s==null?"":s).replace(/"/g,'""')}"`;
+  const hol=d.review.holistic||{};
+  const lines=[];
+  lines.push([q("Landing page"),q(d.brief.title||"")].join(","));
+  lines.push([q("Product"),q(d.brief.product||"")].join(","));
+  lines.push([q("Problems / angles"),q((d.brief.problems||[]).join("; "))].join(","));
+  lines.push([q("Holistic score"),q(hol.score!=null?hol.score+"/100":"")].join(","));
+  lines.push([q("Holistic summary"),q(hol.summary||"")].join(","));
+  lines.push("");
+  lines.push(["#","Line","Type","Agent score","Grounded","Fact sheet ID","Agent notes","Suggested rewrite","Accepted","Reviewer notes","Reviewed by"].map(q).join(","));
+  d.rows.forEach((r,i)=>lines.push([i+1,r.line,r.type,r.score,(r.grounded===false?"no":"yes"),r.fact_sheet_id||"",r.notes,r.suggested_rewrite||"",(r.accepted?"yes":""),r.reviewerNotes||"",r.reviewedBy||""].map(q).join(",")));
+  const name=("LP-review-"+(d.brief.title||"draft")).replace(/[^\w.-]+/g,"-").slice(0,60)+".csv";
+  download(name, lines.join("\n"), "text/csv;charset=utf-8");
+  toast("CSV exported");
+}
+function download(filename, text, mime){
+  const blob=new Blob([text],{type:mime||"text/plain"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a"); a.href=url; a.download=filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+}
+
+/* ---------- tiny markdown (headings, bold, lists) ---------- */
+function mdToHtml(md){
+  let s=esc(md);
+  s=s.replace(/^### (.*)$/gm,"<h3>$1</h3>").replace(/^## (.*)$/gm,"<h2>$1</h2>").replace(/^# (.*)$/gm,"<h1>$1</h1>");
+  s=s.replace(/\*\*(.+?)\*\*/g,"<b>$1</b>").replace(/(^|[^*])\*([^*]+)\*/g,"$1<i>$2</i>");
+  s=s.replace(/^\s*[-•] (.*)$/gm,"<li>$1</li>");
+  s=s.replace(/(<li>[\s\S]*?<\/li>)/g,m=>"<ul>"+m+"</ul>").replace(/<\/ul>\s*<ul>/g,"");
+  return s;
+}
+
+/* ---------- helpers ---------- */
+const val = id => (document.getElementById(id)||{}).value || "";
+const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function setOut(html){ document.getElementById("outBody").innerHTML=html; }
+function toast(msg){ const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove("show"),2600); }
+function copyText(json){ try{navigator.clipboard.writeText(JSON.parse(json)); toast("Copied");}catch(e){toast("Copy failed");} }
+function refreshButtons(){
+  const ready = STATE.synced && val("title").trim();
+  document.getElementById("genBtn").disabled=!ready;
+  document.getElementById("promptBtn").disabled=!ready;
+  document.getElementById("briefHint").textContent = STATE.synced
+    ? (val("title").trim()?"Ready. Generate live, or copy the prompt.":"Add a working title to enable generation.")
+    : "Sync the sheet to load templates, products & evidence.";
+}
+
+/* ---------- wire up ---------- */
+document.getElementById("syncBtn").onclick=syncSheet;
+document.getElementById("draftsBtn").onclick=renderDraftsList;
+document.getElementById("template").onchange=updateComposition;
+document.getElementById("product").onchange=()=>{updateProblems();updateEvidence();};
+document.getElementById("title").oninput=refreshButtons;
+document.getElementById("genBtn").onclick=generate;
+document.getElementById("promptBtn").onclick=()=>{
+  const {system,user}=buildPrompt();
+  navigator.clipboard.writeText(`===== SYSTEM =====\n${system}\n\n===== TASK =====\n${user}`);
+  toast("Full prompt copied — paste into Claude");
+};
+document.getElementById("saveKey").onclick=()=>{
+  const t=val("apiKey").trim();
+  if(t){ localStorage.setItem("fd_app_token",t); toast("Access token saved to this browser"); }
+  else { localStorage.removeItem("fd_app_token"); toast("Access token cleared"); }
+  updateDraftCount();
+};
+document.getElementById("reviewer").oninput=()=>{
+  const n=val("reviewer").trim();
+  if(n) localStorage.setItem("fd_reviewer",n); else localStorage.removeItem("fd_reviewer");
+};
+(function init(){
+  const t=localStorage.getItem("fd_app_token"); if(t) document.getElementById("apiKey").value=t;
+  const n=localStorage.getItem("fd_reviewer"); if(n) document.getElementById("reviewer").value=n;
+  updateDraftCount();
+  syncSheet();
+})();
+</script>
+</body>
+</html>

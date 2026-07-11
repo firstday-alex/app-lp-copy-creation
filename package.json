@@ -1,0 +1,10 @@
+{
+  "name": "lp-copy-studio",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "@vercel/postgres": "^0.10.0"
+  }
+}
