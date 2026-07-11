@@ -55,3 +55,4 @@ The app is **read-only against the sheet** — it never writes back to the sheet
 - Run with `vercel dev`; deploy with `vercel` / `vercel --prod`. See [`DEPLOY.md`](DEPLOY.md).
 - Only external dependency is `@vercel/postgres`; the CSV parser, prompt assembly, and rendering are still hand-rolled.
 # app-lp-copy-creation
+# app-lp-copy-creation
