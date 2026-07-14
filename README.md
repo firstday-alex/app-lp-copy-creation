@@ -33,12 +33,15 @@ Published Google Sheet (read-only), fetched as CSV per tab:
 | Tab | Role |
 |-----|------|
 | README | The quality-system spec the app implements |
-| Templates | Page templates + their composition |
-| LP_Checks | Content requirements R1–R7 (must be present) |
-| Copy_Checks | Line-scoring rubric R1–R6 (0/1/2) |
-| Problems | Product × problem, with primary flag |
-| Approved claims / Statistics / Reviews | Pre-approved evidence, tagged by product + problem |
-| Fact Sheet | Products, SKUs, nutrient dosages, links |
+| Templates | Page templates + their composition (Listicle, Behind the Science, Broad PDP) |
+| LP_Checks | Holistic whole-page requirements R1–R7 (must be present) |
+| Module_Checks | Per-section requirements (each module must pass) |
+| Copy_Checks | Per-line rules — every h1/h2/h3/p must satisfy **all of 1–3 and at least one of 4–6** (0/1/2) |
+| Problems | Product × problem taxonomy, with primary (★) flag — drives the angle picker |
+| Hooks / Claims / Quotes | Pre-approved evidence, tagged by product + problem (Quotes = customer/pediatrician) |
+| Product_Info | Products, SKUs, nutrient dosages, links (the only source for dosages) |
+
+The three grading layers (LP_Checks holistic → Module_Checks per section → Copy_Checks per line) are applied in both generation and the independent review. Only **ACTIVE**-status rules are used.
 
 The app is **read-only against the sheet** — it never writes back to the sheet or any First Day platform. (Review drafts are the app's own data, stored in its Postgres database, not the sheet.)
 
