@@ -58,8 +58,22 @@
   .row>*{flex:1}
   .actions{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
   .modeseg{display:flex;gap:4px;background:var(--chip);border-radius:10px;padding:4px;margin-bottom:14px}
-  .modeseg button{flex:1;border:none;background:transparent;color:var(--muted);font-weight:600;font-size:13px;padding:7px 10px;border-radius:7px;cursor:pointer}
+  .modeseg button{flex:1;border:none;background:transparent;color:var(--muted);font-weight:600;font-size:12px;padding:7px 6px;border-radius:7px;cursor:pointer;white-space:nowrap}
   .modeseg button.active{background:var(--panel);color:var(--ink);box-shadow:var(--shadow)}
+  /* module mode: first-version image upload */
+  .dropzone{margin-top:4px;border:1.5px dashed var(--line);border-radius:12px;padding:18px 14px;text-align:center;
+    color:var(--muted);font-size:12.5px;cursor:pointer;transition:.12s;background:var(--bg)}
+  .dropzone:hover,.dropzone.over{border-color:var(--accent);color:var(--ink);background:color-mix(in srgb,var(--accent) 6%,var(--bg))}
+  .dropzone b{display:block;color:var(--ink);font-size:13px;margin-bottom:2px}
+  .thumbs{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+  .thumb{position:relative;width:72px;height:72px;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--chip)}
+  .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .thumb button{position:absolute;top:2px;right:2px;width:18px;height:18px;border:none;border-radius:50%;
+    background:rgba(0,0,0,.62);color:#fff;font-size:11px;line-height:1;cursor:pointer;padding:0}
+  .thumb .dim{position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.55);color:#fff;font-size:9.5px;text-align:center}
+  .shot{max-width:100%;border:1px solid var(--line);border-radius:12px;display:block;margin:8px 0}
+  .kv{font-size:12.5px;margin:6px 0}
+  .kv b{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:700}
   .hint{font-size:12px;color:var(--muted);margin-top:8px}
   .pill{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:var(--chip);color:var(--muted);margin-left:6px}
   .pill.main{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent)}
@@ -132,7 +146,8 @@
     <div class="body">
       <div class="modeseg" id="modeToggle">
         <button type="button" class="active" data-mode="write">✍️ Write new</button>
-        <button type="button" data-mode="audit">🔍 Grade existing</button>
+        <button type="button" data-mode="audit">🔍 Grade page</button>
+        <button type="button" data-mode="module">🧩 One module</button>
       </div>
 
       <label class="field">Template <span id="tmplHint">· the page you want to write</span></label>
@@ -170,6 +185,26 @@
         <textarea id="existingCopy" style="min-height:180px" placeholder="Paste the current headline, subheads, body, bullets, CTAs — one block per line."></textarea>
       </div>
 
+      <!-- ONE-MODULE fields -->
+      <div id="moduleFields" style="display:none">
+        <label class="field">Module <span>· required · which module is this</span></label>
+        <input id="moduleName" placeholder="e.g. Hero, 3 Reasons Why, Behind the Science" />
+
+        <label class="field">Where it sits <span>· optional · scores the “connects to the previous section?” rule</span></label>
+        <textarea id="modulePrev" placeholder="What comes immediately before this module, and what follows it."></textarea>
+
+        <label class="field">First version <span>· required · screenshot of the module</span></label>
+        <div class="dropzone" id="dropzone">
+          <b>Drop the module screenshot here</b>
+          click to choose · or paste from the clipboard · up to 4 images
+        </div>
+        <input type="file" id="moduleFile" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden />
+        <div class="thumbs" id="thumbs"></div>
+
+        <label class="field">Module copy as text <span>· optional · paste it so lines are quoted exactly</span></label>
+        <textarea id="moduleCopy" placeholder="Paste the module's copy if you have it — otherwise it's read off the image."></textarea>
+      </div>
+
       <div class="actions" id="writeActions">
         <button class="btn primary" id="genBtn" disabled>Generate copy</button>
         <button class="btn" id="promptBtn" disabled>Copy full prompt</button>
@@ -178,7 +213,12 @@
         <button class="btn primary" id="auditBtn" disabled>Grade &amp; improve</button>
         <button class="btn" id="auditPromptBtn" disabled>Copy audit prompt</button>
       </div>
+      <div class="actions" id="moduleActions" style="display:none">
+        <button class="btn primary" id="moduleBtn" disabled>Read image &amp; rewrite module</button>
+        <button class="btn" id="modulePromptBtn" disabled>Copy module prompt</button>
+      </div>
       <div class="hint" id="briefHint">Sync the sheet to load templates, products &amp; evidence.</div>
+      <div class="hint" id="moduleRuleHint" style="display:none"></div>
 
       <label class="field">Your name <span>· shown on the reviews you accept</span></label>
       <input id="reviewer" placeholder="e.g. Alex T." autocomplete="off" />
@@ -240,7 +280,8 @@ const TABS = {
 };
 const COMPETITORS = ["SmartyPants","Hiya","Olly","Flintstones","Ritual"];
 
-const STATE = { raw:{}, templates:[], products:[], problemsByProduct:{}, fact:{}, synced:false };
+const STATE = { raw:{}, templates:[], products:[], problemsByProduct:{}, fact:{}, synced:false,
+                mode:"write", moduleImages:[] };
 
 /* ---------- CSV parser (handles quotes, commas, embedded newlines, "" escapes) ---------- */
 function parseCSV(text){
@@ -312,6 +353,13 @@ function buildModel(){
   STATE.lpChecks     = active(STATE.raw.lp_checks);       // holistic LP requirements (R1–R7)
   STATE.moduleChecks = active(STATE.raw.module_checks);   // per-section requirements
   STATE.copyChecks   = active(STATE.raw.copy_checks);     // per-line rules 1–6
+  // Module mode is graded almost entirely on the Module_Checks tab, and several rows
+  // there have no ACTIVE status. Dropping them would throw away rules the team wrote,
+  // so keep them: ACTIVE rules gate the compliance gate, the rest are advisory.
+  const allModule = rowsAsObjects(STATE.raw.module_checks||[]).filter(r=>r["Rule ID"]&&r["Rule Name"]);
+  const gating = new Set(STATE.moduleChecks.map(r=>r["Rule ID"]));
+  STATE.moduleAll      = allModule;
+  STATE.moduleAdvisory = allModule.filter(r=>!gating.has(r["Rule ID"]));
   // Copy_Checks pass logic (per README): every line must satisfy ALL of rules 1–3
   // and AT LEAST ONE of rules 4–6. Split by numeric Rule ID.
   const cid = r => parseInt(r["Rule ID"],10);
@@ -431,9 +479,25 @@ function updateEvidence(){
 }
 
 /* ---------- Prompt assembly (faithful to sheet README workflow) ---------- */
+// Some Scoring Procedure cells hold a placeholder ("X", "-") rather than a procedure —
+// the 0/1/2 anchors carry the real scoring, so don't pass the placeholder to the model.
+const ruleProc = r => { const p=(r["Scoring Procedure"]||"").trim(); return p.length>2 ? p : ""; };
 function ruleLines(rules){
   return rules.map(r=>{
-    const parts=[`  ${r["Rule ID"]} — ${r["Rule Name"]}: ${r["Scoring Procedure"]}`];
+    const proc=ruleProc(r);
+    const parts=[`  ${r["Rule ID"]} — ${r["Rule Name"]}${proc?`: ${proc}`:""}`];
+    if(r["Score 0 ="]) parts.push(`      0=${r["Score 0 ="]} · 1=${r["Score 1 ="]} · 2=${r["Score 2 ="]}`);
+    if(r["Deterministic Assist"]) parts.push(`      Assist: ${r["Deterministic Assist"]}`);
+    if(r["Fix Instruction Template"]) parts.push(`      Fix: ${r["Fix Instruction Template"]}`);
+    return parts.join("\n");
+  }).join("\n");
+}
+// Module rules, tagged ACTIVE vs advisory so the model knows which ones gate.
+function moduleRuleLines(rules){
+  const gating=new Set((STATE.moduleChecks||[]).map(r=>r["Rule ID"]));
+  return rules.map(r=>{
+    const proc=ruleProc(r);
+    const parts=[`  ${r["Rule ID"]} [${gating.has(r["Rule ID"])?"ACTIVE — gating":"advisory"}] — ${r["Rule Name"]}${proc?`: ${proc}`:""}`];
     if(r["Score 0 ="]) parts.push(`      0=${r["Score 0 ="]} · 1=${r["Score 1 ="]} · 2=${r["Score 2 ="]}`);
     if(r["Deterministic Assist"]) parts.push(`      Assist: ${r["Deterministic Assist"]}`);
     if(r["Fix Instruction Template"]) parts.push(`      Fix: ${r["Fix Instruction Template"]}`);
@@ -678,11 +742,16 @@ APPROVED EVIDENCE (the only hooks/claims/quotes that count as grounded):${evTxt(
 Return your review via the emit_review tool, populating every field.`;
   return {system, user};
 }
+// One reviewer flow for both scopes — a module brief gets the module-scoped prompt.
+function reviewPromptFor(copy, brief){
+  return (brief && brief.module) ? buildModuleReviewPrompt(copy, brief) : buildReviewPrompt(copy, brief);
+}
 async function reviewCopy(){
   if(!STATE.lastCopy){ toast("Generate copy first, then send it for review."); return; }
-  const {system,user}=buildReviewPrompt(STATE.lastCopy, STATE.lastBrief);
+  const isModule=!!(STATE.lastBrief&&STATE.lastBrief.module);
+  const {system,user}=reviewPromptFor(STATE.lastCopy, STATE.lastBrief);
   const model=val("model");
-  setOut(`<div class="empty"><span class="spinner"></span><p>Independent reviewer scoring the page holistically &amp; line by line…</p></div>`);
+  setOut(`<div class="empty"><span class="spinner"></span><p>Independent reviewer scoring the ${isModule?"module":"page"} holistically &amp; line by line…</p></div>`);
   document.getElementById("outMeta").textContent="";
   try{
     const review=await api("/api/review",{method:"POST",body:JSON.stringify({system,user,model})});
@@ -698,7 +767,7 @@ async function reviewCopy(){
 }
 function copyReviewPrompt(){
   if(!STATE.lastCopy){ toast("Generate copy first."); return; }
-  const {system,user}=buildReviewPrompt(STATE.lastCopy, STATE.lastBrief);
+  const {system,user}=reviewPromptFor(STATE.lastCopy, STATE.lastBrief);
   navigator.clipboard.writeText(`===== REVIEWER SYSTEM =====\n${system}\n\n===== COPY TO REVIEW =====\n${user}`);
   toast("Review prompt copied — paste into Claude");
 }
@@ -860,6 +929,314 @@ function copyAuditPrompt(){
   const {system,user}=buildAuditPrompt(existing, buildBrief());
   navigator.clipboard.writeText(`===== AUDIT SYSTEM =====\n${system}\n\n===== PAGE TO GRADE =====\n${user}`);
   toast("Audit prompt copied — paste into Claude");
+}
+
+/* ---------- One-module mode: read the v1 image, grade it, rewrite it, re-check it ---------- */
+const IMG_MAX_EDGE = 2000;      // long edge sent to the API (high-res vision tops out at 2576)
+const IMG_MAX_FILES = 4;
+const IMG_KEEP_BYTES = 1500000; // under this, send the original bytes — crispest small text
+
+function readDataURL(file){
+  return new Promise((ok,no)=>{ const r=new FileReader();
+    r.onload=()=>ok(r.result); r.onerror=()=>no(new Error("couldn't read the file")); r.readAsDataURL(file); });
+}
+function loadImg(src){
+  return new Promise((ok,no)=>{ const i=new Image();
+    i.onload=()=>ok(i); i.onerror=()=>no(new Error("not a readable image")); i.src=src; });
+}
+// Downscale only when needed. Transparent PNGs get a white matte before JPEG encoding.
+async function prepImage(file){
+  const url=await readDataURL(file), img=await loadImg(url);
+  const long=Math.max(img.naturalWidth,img.naturalHeight);
+  if(long<=IMG_MAX_EDGE && file.size<=IMG_KEEP_BYTES){
+    return {media_type:file.type, data:url.split(",")[1], name:file.name, w:img.naturalWidth, h:img.naturalHeight, url};
+  }
+  const s=Math.min(1,IMG_MAX_EDGE/long);
+  const w=Math.max(1,Math.round(img.naturalWidth*s)), h=Math.max(1,Math.round(img.naturalHeight*s));
+  const c=document.createElement("canvas"); c.width=w; c.height=h;
+  const ctx=c.getContext("2d"); ctx.fillStyle="#fff"; ctx.fillRect(0,0,w,h); ctx.drawImage(img,0,0,w,h);
+  const out=c.toDataURL("image/jpeg",0.92);
+  return {media_type:"image/jpeg", data:out.split(",")[1], name:file.name, w, h, url:out};
+}
+async function addImages(files){
+  const list=[...(files||[])];
+  if(!list.length) return;
+  for(const f of list){
+    if(STATE.moduleImages.length>=IMG_MAX_FILES){ toast(`${IMG_MAX_FILES} images max`); break; }
+    if(!/^image\/(png|jpeg|gif|webp)$/.test(f.type||"")){ toast("PNG, JPEG, GIF or WebP only"); continue; }
+    try{ STATE.moduleImages.push(await prepImage(f)); }
+    catch(e){ toast(`Couldn't read ${f.name||"that image"}`); }
+  }
+  renderThumbs(); refreshButtons();
+}
+function renderThumbs(){
+  const el=document.getElementById("thumbs");
+  el.innerHTML=STATE.moduleImages.map((im,i)=>
+    `<div class="thumb"><img src="${im.url}" alt="${esc(im.name||"module v1")}">
+       <button type="button" data-rm="${i}" title="Remove">✕</button>
+       <span class="dim">${im.w}×${im.h}</span></div>`).join("");
+  el.querySelectorAll("[data-rm]").forEach(b=>b.onclick=()=>{
+    STATE.moduleImages.splice(+b.dataset.rm,1); renderThumbs(); refreshButtons();
+  });
+}
+function updateModuleRuleHint(){
+  const el=document.getElementById("moduleRuleHint");
+  if(STATE.mode!=="module" || !STATE.synced){ el.style.display="none"; return; }
+  const adv=(STATE.moduleAdvisory||[]).map(r=>r["Rule ID"]);
+  el.style.display="";
+  el.innerHTML = `Module rules from <b>Module_Checks</b>: ${(STATE.moduleChecks||[]).length} ACTIVE (these gate the compliance check)`
+    + (adv.length ? ` · ${adv.length} advisory — rules ${esc(adv.join(", "))} have no ACTIVE status, so they're scored and reported but don't block. Set Status to ACTIVE in the sheet to make them gate.` : "");
+}
+
+function moduleBrief(){
+  const b=buildBrief();
+  b.module={
+    name:val("moduleName").trim(),
+    prev:val("modulePrev").trim(),
+    copy:val("moduleCopy").trim(),
+    shots:STATE.moduleImages.length
+  };
+  b.title=b.module.name?`${b.module.name} module`:"(untitled module)";
+  return b;
+}
+function buildModulePrompt(brief){
+  brief=brief||{};
+  const m=brief.module||{};
+  const ev=evidenceFor(brief.product, brief.problems||[]);
+  const f=STATE.fact[brief.product];
+  const evTxt=(label,arr)=>arr.length?`\n${label}:\n`+arr.map(x=>`  - [${x.problem||"general"}] ${x.text}${x.source?`  (source: ${x.source})`:""}`).join("\n"):"";
+  const mand=(STATE.copyMandatory||[]).map(r=>r["Rule ID"]).join(", ")||"1, 2, 3";
+  const opt =(STATE.copyOptional||[]).map(r=>r["Rule ID"]).join(", ")||"4, 5, 6";
+  const gateIds=(STATE.moduleChecks||[]).map(r=>r["Rule ID"]).join(", ")||"(none marked ACTIVE)";
+  const advIds=(STATE.moduleAdvisory||[]).map(r=>r["Rule ID"]).join(", ");
+
+  const system =
+`You are a senior conversion copywriter for First Day, a Bio-Matched children's multivitamin brand. You are working on ONE MODULE of a landing page — not a whole page. The attached image is the module's first version. Judge and rewrite only that module.
+
+WORKFLOW (run every step, in order):
+1. READ THE IMAGE FIRST. Before judging anything, describe what is actually there: the picture or scene, the copy lines transcribed VERBATIM (with their type — h1/h2/h3/p/bullet/cta), the reading hierarchy, and what a parent understands in ONE SECOND of looking at it. If a line is unreadable in the image, say so rather than guessing at it. If module copy is also supplied as text below, that text is authoritative for the wording and the image is authoritative for the visual and the hierarchy.
+2. GRADE the first version against every MODULE RULE below (0/1/2 each) and against the COPY_CHECKS, line by line.
+3. REWRITE the module so it passes. Return the rewrite as its parts (headline, subhead, body, bullets, CTA) plus the whole thing as markdown, and state the VISUAL DIRECTION — the specific, ownable moment the image should show for this copy to land.
+4. RE-CHECK YOUR REWRITE against the same module rules and the same Copy_Checks, and report those scores separately from the first version's. Revise and re-score until it passes; report the final state, not your first attempt.
+5. Run the competitor swap test against: ${COMPETITORS.join(", ")}. Any line a competitor could equally say must be rewritten around a First-Day-only asset.
+
+HARD RULES:
+- NO hallucination. Every dosage, ingredient, study, statistic, or claim in the rewrite MUST come from the Product Info or Approved Evidence below. If the first version makes an unsupported claim, flag it and either ground it in the evidence or cut it — never invent a source.
+- Grade the ORIGINAL honestly; do not grade your rewrite in the v1 fields.
+- Stay inside one module. Do not invent neighbouring sections or write a whole page.
+- Any falsifiable claim scoring 2 must map to a Product Info / Fact Sheet ID, or the gate fails.
+
+MODULE RULES — score the module against every one of these:
+${moduleRuleLines(STATE.moduleAll||[])}
+
+MODULE RULE STATUS: rules ${gateIds} are ACTIVE and GATING — a failure there blocks the compliance gate.${advIds?` Rules ${advIds} are ADVISORY (no ACTIVE status in the sheet): score and report them, set gating=false, but do not block the gate on them alone.`:""}
+
+COPY_CHECKS — score every line 0/1/2:
+${ruleLines(STATE.copyChecks||[])}
+
+COPY_CHECKS PASS LOGIC: every line (h1, h2, h3, p) must satisfy ALL of rules ${mand} AND at least ONE of rules ${opt}.
+
+PASS CRITERIA for the rewrite: every gating module rule at 2 (a justified 1 at worst, never 0); every line passing the Copy_Checks logic; every falsifiable claim traceable to a Product Info line; nothing a competitor could equally say.`;
+
+  const user =
+`MODULE TO IMPROVE
+  Module: ${m.name||"(unnamed)"}
+  Page template it lives in: ${brief.template||"(none)"} — composition: ${brief.composition||"—"}
+  Product: ${brief.product}
+  Problems / angles: ${(brief.problems&&brief.problems.length)?brief.problems.join("; "):"(none specified — infer from the module)"}
+  Channel: ${brief.channel}
+  Where it sits: ${m.prev||"(not specified — score the 'connects to the previous section' rule on what the module itself implies, and say what you assumed)"}
+
+ATTACHED: ${m.shots===1?"1 image":`${m.shots} images`} of the module's first version.
+${m.copy?`\nMODULE COPY AS TEXT (authoritative for wording — quote these lines verbatim):\n"""\n${m.copy}\n"""`:"\n(No copy text supplied — transcribe the lines off the image.)"}
+
+PRODUCT INFO (the ONLY source for dosages/ingredients — cite by SKU/Product ID):
+${f?`  Product: ${brief.product}\n  SKU: ${f.sku} · Product ID: ${f.productId} · Variant ID: ${f.variantId}\n  Nutrients:\n${(f.nutrients||"(none listed)").split("\n").map(l=>"    "+l).join("\n")}`:"  (no product info row — any dosage/ingredient claim is ungrounded)"}
+
+APPROVED EVIDENCE (reuse verbatim or tighten; do not exceed what's here):${evTxt("Hooks",ev.hooks)}${evTxt("Claims",ev.claims)}${evTxt("Quotes",ev.quotes)}
+
+CREDIBILITY ANCHORS you may cite: Advisory board (Dr. Lei Chen, Yale; Dr. Ed Giovannucci, Harvard); third-party testing; Clean Label Project certification; the 35,000-study review; 45-day guarantee.
+DIFFERENTIATION assets: No Junk(TM), Real Wholesome(R), Bio-Matched mechanism, methylfolate / Cognizin(R) / Suntheanine(R) / Livaux(R) / SNZ 1969(R), segment-specific dosing, the 3-in-1 system.
+
+Return everything via the emit_module tool, populating every field.`;
+
+  return {system, user, images:STATE.moduleImages.map(i=>({media_type:i.media_type, data:i.data})), brief};
+}
+async function runModule(){
+  if(!STATE.moduleImages.length){ toast("Add a screenshot of the module's first version."); return; }
+  const brief=moduleBrief();
+  STATE.lastBrief=brief;
+  const model=val("model");
+  setOut(`<div class="empty"><span class="spinner"></span><p>Reading the module image, grading it &amp; rewriting…</p></div>`);
+  document.getElementById("outMeta").textContent="";
+  try{
+    const {system,user,images}=buildModulePrompt(brief);
+    const r=await api("/api/module",{method:"POST",body:JSON.stringify({system,user,model,images})});
+    renderModule(r, model);
+  }catch(e){
+    setOut(`<div class="gate fail">⚠︎ Module pass failed</div>
+      <div class="copyblock" style="border-color:var(--bad)">${esc(e.message)}</div>
+      <p class="hint">You can also <b>Copy module prompt</b>, paste it into Claude and attach the screenshot there.</p>`);
+  }
+}
+function renderModule(r, model){
+  const im=r.improved_module||{};
+  STATE.lastCopy=im.markdown||"";   // so the independent check reuses the review flow
+  const gate=r.compliance_gate||{pass:false,blockers:["No gate returned"]};
+  const g=r.v1_grade||{score:0,summary:""};
+  const read=r.v1_read||{};
+  let h="";
+
+  h+=`<div class="gate ${gate.pass?"pass":"fail"}">${gate.pass?"✓ Compliance gate PASSED":"✗ Compliance gate BLOCKED"}${
+      gate.blockers&&gate.blockers.length?` — ${esc(gate.blockers.join("; "))}`:""}</div>`;
+
+  h+=`<div class="section-title">What the image shows · first version</div><div class="copyblock">`;
+  h+=`<div class="kv"><b>Visual</b>${esc(read.visual||"—")}</div>`;
+  h+=`<div class="kv"><b>Understood in one second</b>${esc(read.one_second_takeaway||"—")}</div>`;
+  if(read.hierarchy)  h+=`<div class="kv"><b>Hierarchy</b>${esc(read.hierarchy)}</div>`;
+  if(read.mobile_fold)h+=`<div class="kv"><b>Mobile fold</b>${esc(read.mobile_fold)}</div>`;
+  h+=`</div>`;
+  if(read.lines&&read.lines.length){
+    h+=`<div class="section-title">Lines read off the image</div><table><tr><th>Line</th><th>Type</th></tr>`;
+    read.lines.forEach(l=>h+=`<tr><td>${esc(l.text||"")}</td><td>${l.type?`<span class="tag">${esc(l.type)}</span>`:""}</td></tr>`);
+    h+=`</table>`;
+  }
+
+  h+=`<div class="section-title">Grade · first version</div>
+      <div class="copyblock"><b style="font-size:20px">${esc(String(g.score))}/100</b>${g.verdict?` · ${esc(g.verdict)}`:""}<br>${esc(g.summary||"")}</div>`;
+
+  const ruleTable=(title,rows,extra)=>{
+    if(!rows||!rows.length) return "";
+    const withPass=rows.some(c=>c.pass!=null);
+    let s=`<div class="section-title">${title}</div><table><tr><th>#</th><th>Rule</th><th>Score</th>${
+      withPass?"<th>Pass</th>":""}<th>${extra}</th></tr>`;
+    rows.forEach(c=>{
+      const adv=c.gating===false?` <span class="tag">advisory</span>`:"";
+      s+=`<tr><td>${esc(c.id||"")}</td><td>${esc(c.name||"")}${adv}</td>
+        <td><span class="score s${c.score}">${c.score}</span></td>${
+        withPass?`<td><span class="check ${c.pass?"y":"n"}">${c.pass?"✓":"✕"}</span></td>`:""}
+        <td>${esc(c.issue||c.note||"")}${c.fix?`<br><i>fix: ${esc(c.fix)}</i>`:""}</td></tr>`;
+    });
+    return s+`</table>`;
+  };
+  h+=ruleTable("Module rules · first version", r.v1_module_checks, "Issue / fix");
+  if(r.v1_copy_checks?.length){
+    h+=`<div class="section-title">Copy checks · first version</div><table><tr><th>#</th><th>Check</th><th>Score</th><th>Why</th></tr>`;
+    r.v1_copy_checks.forEach(c=>h+=`<tr><td>${esc(c.id||"")}</td><td>${esc(c.name||"")}</td>
+      <td><span class="score s${c.score}">${c.score}</span></td><td>${esc(c.justification||"")}</td></tr>`);
+    h+=`</table>`;
+  }
+  if(r.v1_line_issues?.length){
+    h+=`<div class="section-title">Line issues &amp; fixes</div><table><tr><th>Line</th><th>Score</th><th>Grounded</th><th>Issue</th><th>Suggested rewrite</th></tr>`;
+    r.v1_line_issues.forEach(c=>h+=`<tr><td>${esc(c.line||"")}</td>
+      <td><span class="score s${c.score}">${c.score}</span></td>
+      <td><span class="check ${c.grounded!==false?"y":"n"}">${c.grounded!==false?"✓":"✕"}</span>${c.fact_sheet_id?`<br><code class="mini">${esc(c.fact_sheet_id)}</code>`:""}</td>
+      <td>${esc(c.issue||"")}</td><td>${esc(c.suggested_rewrite||"—")}</td></tr>`);
+    h+=`</table>`;
+  }
+
+  h+=`<div class="section-title">Rewritten module</div><div class="copyblock">${mdToHtml(im.markdown||"")}</div>`;
+  const part=(label,v)=>v?`<div class="kv"><b>${label}</b>${esc(v)}</div>`:"";
+  let parts=part("Headline",im.headline)+part("Subhead",im.subhead)+part("Body",im.body)
+    +((im.bullets&&im.bullets.length)?`<div class="kv"><b>Bullets</b>${im.bullets.map(b=>esc(b)).join("<br>")}</div>`:"")
+    +part("CTA",im.cta)+part("Visual direction",im.visual_direction);
+  if(parts) h+=`<div class="section-title">Module parts</div><div class="copyblock">${parts}</div>`;
+  h+=`<div class="actions">
+        <button class="btn primary" onclick="reviewCopy()">Send module for independent check</button>
+        <button class="btn" onclick="copyText(${JSON.stringify(JSON.stringify(im.markdown||"")).replace(/"/g,'&quot;')})">Copy module copy</button>
+        <button class="btn" onclick="copyModulePrompt()">Copy module prompt</button>
+      </div>`;
+
+  h+=ruleTable("Module rules · rewrite re-checked", r.improved_module_checks, "Note");
+  if(r.improved_copy_checks?.length){
+    h+=`<div class="section-title">Copy checks · rewrite</div><table><tr><th>#</th><th>Check</th><th>Score</th><th>Why</th></tr>`;
+    r.improved_copy_checks.forEach(c=>h+=`<tr><td>${esc(c.id||"")}</td><td>${esc(c.name||"")}</td>
+      <td><span class="score s${c.score}">${c.score}</span></td><td>${esc(c.justification||"")}</td></tr>`);
+    h+=`</table>`;
+  }
+  if(r.improved_line_checks?.length){
+    h+=`<div class="section-title">Every rewritten line vs the pass logic</div><table><tr><th>Line</th><th>Type</th><th>Score</th><th>Passes</th><th>Grounded</th><th>Note</th></tr>`;
+    r.improved_line_checks.forEach(c=>h+=`<tr><td>${esc(c.line||"")}</td>
+      <td>${c.type?`<span class="tag">${esc(c.type)}</span>`:""}</td>
+      <td><span class="score s${c.score}">${c.score}</span></td>
+      <td><span class="check ${c.passes_logic?"y":"n"}">${c.passes_logic?"✓":"✕"}</span></td>
+      <td><span class="check ${c.grounded!==false?"y":"n"}">${c.grounded!==false?"✓":"✕"}</span>${c.fact_sheet_id?`<br><code class="mini">${esc(c.fact_sheet_id)}</code>`:""}</td>
+      <td>${esc(c.note||"")}</td></tr>`);
+    h+=`</table>`;
+  }
+  if(r.claim_mapping?.length){
+    h+=`<div class="section-title">Claim → fact sheet</div><table><tr><th>Claim</th><th>Fact sheet ID</th></tr>`;
+    r.claim_mapping.forEach(c=>h+=`<tr><td>${esc(c.claim||"")}</td><td><code class="mini">${esc(c.fact_sheet_id||"—")}</code></td></tr>`);
+    h+=`</table>`;
+  }
+  if(r.competitor_swap?.length){
+    h+=`<div class="section-title">Competitor swap test</div><table><tr><th>Line</th><th>Survives?</th><th>Rewrite</th></tr>`;
+    r.competitor_swap.forEach(c=>h+=`<tr><td>${esc(c.line||"")}</td>
+      <td><span class="check ${c.survives?"n":"y"}">${c.survives?"✕":"✓"}</span></td><td>${esc(c.rewrite||"")}</td></tr>`);
+    h+=`</table>`;
+  }
+  if(r.notes) h+=`<div class="section-title">Notes</div><p class="hint">${esc(r.notes)}</p>`;
+  setOut(h);
+  document.getElementById("outMeta").textContent = model?`· module · ${model}`:"· module";
+}
+function copyModulePrompt(){
+  if(!STATE.moduleImages.length && !(STATE.lastBrief&&STATE.lastBrief.module)){ toast("Add the module screenshot first."); return; }
+  const {system,user}=buildModulePrompt(STATE.moduleImages.length?moduleBrief():STATE.lastBrief);
+  navigator.clipboard.writeText(`===== MODULE SYSTEM =====\n${system}\n\n===== MODULE TASK =====\n${user}\n\n(Attach the module screenshot to the message in Claude — images can't ride along on the clipboard.)`);
+  toast("Module prompt copied — paste into Claude and attach the screenshot");
+}
+// Independent check of the rewritten module: same reviewer contract as the LP flow,
+// scoped to one module. Deliberately does NOT see the v1 image — it scores the new
+// copy against the rules and the evidence, nothing else.
+function buildModuleReviewPrompt(copy, brief){
+  brief=brief||{}; const m=brief.module||{};
+  const ev=evidenceFor(brief.product, brief.problems||[]);
+  const f=STATE.fact[brief.product];
+  const evTxt=(label,arr)=>arr.length?`\n${label}:\n`+arr.map(x=>`  - [${x.problem||"general"}] ${x.text}${x.source?`  (source: ${x.source})`:""}`).join("\n"):"";
+  const system =
+`You are an INDEPENDENT copy reviewer for First Day, a Bio-Matched children's multivitamin brand. You did NOT write this module — critique and score it, don't defend or rewrite it wholesale. You are reviewing ONE MODULE, not a page: do not mark it down for lacking things that belong to other modules.
+
+HARD RULES:
+- NO hallucination. Never introduce a fact, dosage, study, statistic, or ingredient claim that is not in the provided Fact Sheet or Approved Evidence. Do not look anything up.
+- If a line makes a falsifiable claim the provided evidence doesn't support, set grounded=false, say so in notes, and score accordingly.
+- Any suggested_rewrite must stay strictly within the provided evidence. If a line can't be fixed without new facts, leave suggested_rewrite blank and explain.
+- Quote each line verbatim. Do not merge or paraphrase lines.
+
+TASKS:
+1. Holistic review of the module against the MODULE RULES: score 0-100, one-word verdict (Strong / Mixed / Weak), short summary, key strengths, key risks. Judge the one-second read, the header/paragraph congruency, and whether it connects to what precedes it.
+2. Line-by-line: for each line, quote it verbatim, classify its type, score 0/1/2 against the Copy_Checks, list the checks that drove the score, mark grounded plus the Fact Sheet ID for any falsifiable claim, give concise notes and an evidence-safe rewrite (or blank).
+3. Compliance gate: pass/fail + blockers. Any falsifiable claim scoring 2 MUST map to a Product Info ID or the gate fails, and every line must satisfy the Copy_Checks pass logic.
+
+MODULE RULES:
+${moduleRuleLines(STATE.moduleAll||[])}
+ACTIVE and gating: ${(STATE.moduleChecks||[]).map(r=>r["Rule ID"]).join(", ")||"(none)"}.${(STATE.moduleAdvisory||[]).length?` Advisory only (report, don't block): ${STATE.moduleAdvisory.map(r=>r["Rule ID"]).join(", ")}.`:""}
+
+COPY_CHECKS — score every line 0/1/2:
+${ruleLines(STATE.copyChecks||[])}
+
+COPY_CHECKS PASS LOGIC: every line must satisfy ALL of rules ${(STATE.copyMandatory||[]).map(r=>r["Rule ID"]).join(", ")||"1, 2, 3"} AND at least ONE of rules ${(STATE.copyOptional||[]).map(r=>r["Rule ID"]).join(", ")||"4, 5, 6"}.
+Competitor swap test brands: ${COMPETITORS.join(", ")}.`;
+
+  const user =
+`MODULE UNDER REVIEW
+  Module: ${m.name||"(unnamed)"}
+  Product: ${brief.product}
+  Problems / angles: ${(brief.problems&&brief.problems.length)?brief.problems.join("; "):"(none specified)"}
+  Page template: ${brief.template} · Channel: ${brief.channel}
+  Where it sits: ${m.prev||"(not specified)"}
+
+MODULE COPY (review exactly this — one module, nothing more):
+"""
+${copy}
+"""
+
+PRODUCT INFO (the ONLY source for dosages/ingredients):
+${f?`  Product: ${brief.product}\n  SKU: ${f.sku} · Product ID: ${f.productId} · Variant ID: ${f.variantId}\n  Nutrients:\n${(f.nutrients||"(none listed)").split("\n").map(l=>"    "+l).join("\n")}`:"  (no product info row — any dosage/ingredient claim is ungrounded)"}
+
+APPROVED EVIDENCE (the only hooks/claims/quotes that count as grounded):${evTxt("Hooks",ev.hooks)}${evTxt("Claims",ev.claims)}${evTxt("Quotes",ev.quotes)}
+
+Return your review via the emit_review tool, populating every field.`;
+  return {system, user};
 }
 
 /* ---------- API client (server holds the key; Postgres holds the shared drafts) ---------- */
@@ -1030,28 +1407,41 @@ function setOut(html){ document.getElementById("outBody").innerHTML=html; }
 function toast(msg){ const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove("show"),2600); }
 function copyText(json){ try{navigator.clipboard.writeText(JSON.parse(json)); toast("Copied");}catch(e){toast("Copy failed");} }
 function refreshButtons(){
-  const audit = STATE.mode==="audit";
-  const writeReady = STATE.synced && val("title").trim();
-  const auditReady = STATE.synced && val("existingCopy").trim();
+  const mode = STATE.mode;
+  const writeReady  = STATE.synced && val("title").trim();
+  const auditReady  = STATE.synced && val("existingCopy").trim();
+  const moduleReady = STATE.synced && val("moduleName").trim() && STATE.moduleImages.length>0;
   document.getElementById("genBtn").disabled=!writeReady;
   document.getElementById("promptBtn").disabled=!writeReady;
   document.getElementById("auditBtn").disabled=!auditReady;
   document.getElementById("auditPromptBtn").disabled=!auditReady;
-  document.getElementById("briefHint").textContent = !STATE.synced
+  document.getElementById("moduleBtn").disabled=!moduleReady;
+  document.getElementById("modulePromptBtn").disabled=!moduleReady;
+  const hint = !STATE.synced
     ? "Sync the sheet to load templates, products & evidence."
-    : audit
+    : mode==="audit"
       ? (auditReady?"Ready. Grade & improve, or copy the prompt.":"Paste the existing page copy to enable grading.")
-      : (writeReady?"Ready. Generate live, or copy the prompt.":"Add a working title to enable generation.");
+      : mode==="module"
+        ? (moduleReady?"Ready. The image gets read, graded on the module rules, rewritten, then re-checked."
+                      :"Name the module and add a screenshot of its first version.")
+        : (writeReady?"Ready. Generate live, or copy the prompt.":"Add a working title to enable generation.");
+  document.getElementById("briefHint").textContent = hint;
+  updateModuleRuleHint();
 }
 function setMode(mode){
   STATE.mode = mode;
   document.querySelectorAll("#modeToggle button").forEach(b=>b.classList.toggle("active", b.dataset.mode===mode));
-  const audit = mode==="audit";
-  document.getElementById("writeFields").style.display   = audit?"none":"";
-  document.getElementById("writeActions").style.display  = audit?"none":"flex";
-  document.getElementById("auditFields").style.display   = audit?"":"none";
-  document.getElementById("auditActions").style.display  = audit?"flex":"none";
-  document.getElementById("tmplHint").textContent = audit?"· the page shape to rewrite into":"· the page you want to write";
+  const show=(id,on,disp)=>document.getElementById(id).style.display = on?(disp||""):"none";
+  show("writeFields",  mode==="write");
+  show("writeActions", mode==="write","flex");
+  show("auditFields",  mode==="audit");
+  show("auditActions", mode==="audit","flex");
+  show("moduleFields", mode==="module");
+  show("moduleActions",mode==="module","flex");
+  document.getElementById("tmplHint").textContent =
+    mode==="audit" ? "· the page shape to rewrite into"
+    : mode==="module" ? "· the page this module belongs to"
+    : "· the page you want to write";
   refreshButtons();
 }
 
@@ -1066,6 +1456,28 @@ document.querySelectorAll("#modeToggle button").forEach(b=>b.onclick=()=>setMode
 document.getElementById("genBtn").onclick=generate;
 document.getElementById("auditBtn").onclick=audit;
 document.getElementById("auditPromptBtn").onclick=copyAuditPrompt;
+document.getElementById("moduleBtn").onclick=runModule;
+document.getElementById("modulePromptBtn").onclick=copyModulePrompt;
+document.getElementById("moduleName").oninput=refreshButtons;
+(function wireDropzone(){
+  const zone=document.getElementById("dropzone"), input=document.getElementById("moduleFile");
+  zone.onclick=()=>input.click();
+  input.onchange=()=>{ addImages(input.files); input.value=""; };
+  ["dragenter","dragover"].forEach(ev=>zone.addEventListener(ev,e=>{
+    e.preventDefault(); zone.classList.add("over"); }));
+  ["dragleave","drop"].forEach(ev=>zone.addEventListener(ev,e=>{
+    e.preventDefault(); zone.classList.remove("over"); }));
+  zone.addEventListener("drop",e=>addImages(e.dataTransfer&&e.dataTransfer.files));
+  // Paste a screenshot straight in — only while module mode is open, and not while
+  // the caret is in a text field (there, paste means paste text).
+  document.addEventListener("paste",e=>{
+    if(STATE.mode!=="module") return;
+    const t=e.target&&e.target.tagName;
+    if(t==="INPUT"||t==="TEXTAREA") return;
+    const files=[...((e.clipboardData&&e.clipboardData.files)||[])];
+    if(files.length){ e.preventDefault(); addImages(files); }
+  });
+})();
 document.getElementById("promptBtn").onclick=()=>{
   const {system,user}=buildPrompt();
   navigator.clipboard.writeText(`===== SYSTEM =====\n${system}\n\n===== TASK =====\n${user}`);
