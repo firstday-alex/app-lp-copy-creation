@@ -218,7 +218,7 @@
         <button class="btn" id="modulePromptBtn" disabled>Copy module prompt</button>
       </div>
       <div class="hint" id="briefHint">Sync the sheet to load templates, products &amp; evidence.</div>
-      <div class="hint" id="moduleRuleHint" style="display:none"></div>
+      <div class="hint" id="moduleRuleHint" style="display:none;margin-top:4px"></div>
 
       <label class="field">Your name <span>· shown on the reviews you accept</span></label>
       <input id="reviewer" placeholder="e.g. Alex T." autocomplete="off" />
@@ -353,13 +353,15 @@ function buildModel(){
   STATE.lpChecks     = active(STATE.raw.lp_checks);       // holistic LP requirements (R1–R7)
   STATE.moduleChecks = active(STATE.raw.module_checks);   // per-section requirements
   STATE.copyChecks   = active(STATE.raw.copy_checks);     // per-line rules 1–6
-  // Module mode is graded almost entirely on the Module_Checks tab, and several rows
-  // there have no ACTIVE status. Dropping them would throw away rules the team wrote,
-  // so keep them: ACTIVE rules gate the compliance gate, the rest are advisory.
-  const allModule = rowsAsObjects(STATE.raw.module_checks||[]).filter(r=>r["Rule ID"]&&r["Rule Name"]);
-  const gating = new Set(STATE.moduleChecks.map(r=>r["Rule ID"]));
-  STATE.moduleAll      = allModule;
-  STATE.moduleAdvisory = allModule.filter(r=>!gating.has(r["Rule ID"]));
+  // Module rules are the exception to the ACTIVE-only convention: EVERY row on
+  // Module_Checks is graded and gating, whichever mode is running. Several rows have
+  // no Status set, and honouring that would drop a third of the module rubric —
+  // including header/paragraph congruency and the mobile-fold check. `moduleAll` is
+  // what gets graded; `moduleNoStatus` is only used to tell the team which rows the
+  // app is gating ahead of the sheet.
+  STATE.moduleAll = rowsAsObjects(STATE.raw.module_checks||[]).filter(r=>r["Rule ID"]&&r["Rule Name"]);
+  const sheetActive = new Set(STATE.moduleChecks.map(r=>r["Rule ID"]));
+  STATE.moduleNoStatus = STATE.moduleAll.filter(r=>!sheetActive.has(r["Rule ID"]));
   // Copy_Checks pass logic (per README): every line must satisfy ALL of rules 1–3
   // and AT LEAST ONE of rules 4–6. Split by numeric Rule ID.
   const cid = r => parseInt(r["Rule ID"],10);
@@ -492,18 +494,6 @@ function ruleLines(rules){
     return parts.join("\n");
   }).join("\n");
 }
-// Module rules, tagged ACTIVE vs advisory so the model knows which ones gate.
-function moduleRuleLines(rules){
-  const gating=new Set((STATE.moduleChecks||[]).map(r=>r["Rule ID"]));
-  return rules.map(r=>{
-    const proc=ruleProc(r);
-    const parts=[`  ${r["Rule ID"]} [${gating.has(r["Rule ID"])?"ACTIVE — gating":"advisory"}] — ${r["Rule Name"]}${proc?`: ${proc}`:""}`];
-    if(r["Score 0 ="]) parts.push(`      0=${r["Score 0 ="]} · 1=${r["Score 1 ="]} · 2=${r["Score 2 ="]}`);
-    if(r["Deterministic Assist"]) parts.push(`      Assist: ${r["Deterministic Assist"]}`);
-    if(r["Fix Instruction Template"]) parts.push(`      Fix: ${r["Fix Instruction Template"]}`);
-    return parts.join("\n");
-  }).join("\n");
-}
 function buildBrief(){
   return {
     template: val("template"),
@@ -539,7 +529,7 @@ LP_CHECKS — holistic page requirements (all must be present):
 ${ruleLines(STATE.lpChecks)}
 
 MODULE_CHECKS — every section/module must satisfy these:
-${ruleLines(STATE.moduleChecks)}
+${ruleLines(STATE.moduleAll||[])}
 
 COPY_CHECKS — score every line 0/1/2:
 ${ruleLines(STATE.copyChecks)}
@@ -565,37 +555,11 @@ APPROVED EVIDENCE (reuse verbatim or tighten; do not exceed what's here):${evTxt
 CREDIBILITY ANCHORS you may cite: Advisory board (Dr. Lei Chen, Yale; Dr. Ed Giovannucci, Harvard); third-party testing; Clean Label Project certification; the 35,000-study review; 45-day guarantee.
 DIFFERENTIATION assets: No Junk(TM), Real Wholesome(R), Bio-Matched mechanism, methylfolate / Cognizin(R) / Suntheanine(R) / Livaux(R) / SNZ 1969(R), segment-specific dosing, the 3-in-1 system.
 
-Return the final copy plus your scoring via the emit_copy tool, populating every field (including module_checks). If not calling the tool, return one JSON object with keys: big_promise_used, inferred_promise (bool), copy (markdown), lp_checks [{id,name,present,evidence}], module_checks [{id,name,pass,note}], copy_checks [{id,name,score,justification,fix_applied}], claim_mapping [{claim,fact_sheet_id}], competitor_swap [{line,survives,rewrite}], compliance_gate {pass,blockers[]}, notes.`;
+Work in this order and return one JSON object with these keys, in this order, populating every one (including module_checks):
+big_promise_used, inferred_promise (bool), draft (markdown — your first pass at the copy), self_critique [{line,rule_id,problem,fix}] (what is wrong with that draft, judged against the rubric — be specific and unsparing), copy (markdown — the FINAL copy, with every fix from self_critique applied; this is what ships and what every check below scores), lp_checks [{id,name,present,evidence}], module_checks [{id,name,pass,note}], copy_checks [{id,name,score,justification,fix_applied}], claim_mapping [{claim,fact_sheet_id}], competitor_swap [{line,survives,rewrite}], compliance_gate {pass,blockers[]}, notes.`;
 
   return {system, user, brief:b};
 }
-
-/* ---------- Structured output tool schema ---------- */
-const TOOL = {
-  name:"emit_copy",
-  description:"Return the final landing-page copy with per-rule scoring and the compliance gate.",
-  input_schema:{ type:"object", properties:{
-    big_promise_used:{type:"string"},
-    inferred_promise:{type:"boolean"},
-    copy:{type:"string", description:"Final copy in the template composition, markdown."},
-    lp_checks:{type:"array", items:{type:"object", properties:{
-      id:{type:"string"},name:{type:"string"},present:{type:"boolean"},evidence:{type:"string"}},
-      required:["id","present"]}},
-    module_checks:{type:"array", items:{type:"object", properties:{
-      id:{type:"string"},name:{type:"string"},pass:{type:"boolean"},note:{type:"string"}},
-      required:["id","pass"]}},
-    copy_checks:{type:"array", items:{type:"object", properties:{
-      id:{type:"string"},name:{type:"string"},score:{type:"integer",enum:[0,1,2]},
-      justification:{type:"string"},fix_applied:{type:"string"}}, required:["id","score"]}},
-    claim_mapping:{type:"array", items:{type:"object", properties:{
-      claim:{type:"string"},fact_sheet_id:{type:"string"}}, required:["claim"]}},
-    competitor_swap:{type:"array", items:{type:"object", properties:{
-      line:{type:"string"},survives:{type:"boolean"},rewrite:{type:"string"}}, required:["line","survives"]}},
-    compliance_gate:{type:"object", properties:{
-      pass:{type:"boolean"}, blockers:{type:"array",items:{type:"string"}}}, required:["pass"]},
-    notes:{type:"string"}
-  }, required:["copy","lp_checks","copy_checks","compliance_gate"]}
-};
 
 /* ---------- Live generation (via the server-side /api/generate proxy) ---------- */
 async function generate(){
@@ -666,31 +630,6 @@ function renderResult(r, model){
 }
 
 /* ---------- Independent reviewer agent ---------- */
-const REVIEW_TOOL = {
-  name:"emit_review",
-  description:"Return an independent holistic + line-by-line review of the landing-page copy.",
-  input_schema:{ type:"object", properties:{
-    holistic:{type:"object", properties:{
-      score:{type:"integer", minimum:0, maximum:100},
-      verdict:{type:"string", description:"one word: Strong / Mixed / Weak"},
-      summary:{type:"string"},
-      strengths:{type:"array", items:{type:"string"}},
-      risks:{type:"array", items:{type:"string"}}
-    }, required:["score","summary"]},
-    lines:{type:"array", items:{type:"object", properties:{
-      line:{type:"string", description:"the copy line, verbatim"},
-      type:{type:"string", description:"headline / subhead / body / bullet / cta / etc"},
-      score:{type:"integer", enum:[0,1,2]},
-      rubric_flags:{type:"array", items:{type:"string"}},
-      grounded:{type:"boolean", description:"true if every falsifiable claim in the line is supported by provided evidence"},
-      fact_sheet_id:{type:"string"},
-      notes:{type:"string"},
-      suggested_rewrite:{type:"string", description:"evidence-safe rewrite, or blank if none is possible without new facts"}
-    }, required:["line","score","notes"]}},
-    overall_compliance:{type:"object", properties:{
-      pass:{type:"boolean"}, blockers:{type:"array", items:{type:"string"}}}, required:["pass"]}
-  }, required:["holistic","lines","overall_compliance"]}
-};
 function buildReviewPrompt(copy, brief){
   brief = brief || {};
   const ev=evidenceFor(brief.product, brief.problems||[]);
@@ -714,7 +653,7 @@ LP_CHECKS — holistic page requirements (should all be present):
 ${ruleLines(STATE.lpChecks||[])}
 
 MODULE_CHECKS — each section/module should satisfy these:
-${ruleLines(STATE.moduleChecks||[])}
+${ruleLines(STATE.moduleAll||[])}
 
 COPY_CHECKS — score every line 0/1/2:
 ${ruleLines(STATE.copyChecks||[])}
@@ -773,36 +712,6 @@ function copyReviewPrompt(){
 }
 
 /* ---------- Audit mode: grade an existing page + suggest better copy ---------- */
-const AUDIT_TOOL = {
-  name:"emit_audit",
-  description:"Grade an existing landing page against the quality system and return an improved, evidence-grounded rewrite.",
-  input_schema:{ type:"object", properties:{
-    grade:{type:"object", properties:{
-      score:{type:"integer", minimum:0, maximum:100},
-      verdict:{type:"string", description:"one word: Strong / Mixed / Weak"},
-      summary:{type:"string"}
-    }, required:["score","summary"]},
-    lp_checks:{type:"array", items:{type:"object", properties:{
-      id:{type:"string"},name:{type:"string"},present:{type:"boolean"},evidence:{type:"string"}}, required:["id","present"]}},
-    module_checks:{type:"array", items:{type:"object", properties:{
-      id:{type:"string"},name:{type:"string"},pass:{type:"boolean"},note:{type:"string"}}, required:["id","pass"]}},
-    copy_checks:{type:"array", items:{type:"object", properties:{
-      id:{type:"string"},name:{type:"string"},score:{type:"integer",enum:[0,1,2]},justification:{type:"string"}}, required:["id","score"]}},
-    line_issues:{type:"array", items:{type:"object", properties:{
-      line:{type:"string", description:"the existing line, verbatim"},
-      type:{type:"string", description:"headline / subhead / body / bullet / cta"},
-      score:{type:"integer", enum:[0,1,2]},
-      grounded:{type:"boolean"},
-      fact_sheet_id:{type:"string"},
-      issue:{type:"string", description:"what's wrong, per the rubric"},
-      suggested_rewrite:{type:"string", description:"evidence-safe rewrite, or blank if impossible without new facts"}
-    }, required:["line","score","issue"]}},
-    improved_copy:{type:"string", description:"the full improved landing page in the template composition, markdown, grounded strictly in the provided evidence."},
-    compliance_gate:{type:"object", properties:{
-      pass:{type:"boolean"}, blockers:{type:"array", items:{type:"string"}}}, required:["pass"]},
-    notes:{type:"string"}
-  }, required:["grade","improved_copy","compliance_gate"]}
-};
 function buildAuditPrompt(existingCopy, brief){
   brief = brief || {};
   const ev=evidenceFor(brief.product, brief.problems||[]);
@@ -826,7 +735,7 @@ LP_CHECKS — holistic page requirements (all should be present):
 ${ruleLines(STATE.lpChecks||[])}
 
 MODULE_CHECKS — each section/module should satisfy these:
-${ruleLines(STATE.moduleChecks||[])}
+${ruleLines(STATE.moduleAll||[])}
 
 COPY_CHECKS — score every line 0/1/2:
 ${ruleLines(STATE.copyChecks||[])}
@@ -834,7 +743,8 @@ ${ruleLines(STATE.copyChecks||[])}
 COPY_CHECKS PASS LOGIC: every line must satisfy ALL of rules ${mand} AND at least ONE of rules ${opt}.
 Competitor swap test brands: ${COMPETITORS.join(", ")}. If a line survives the swap, it isn't differentiated.
 
-Return: grade (0-100 + one-word verdict + summary), lp_checks, module_checks, copy_checks, line_issues, improved_copy, and the compliance_gate.
+Return, in this order: grade (0-100 + one-word verdict + summary), lp_checks, module_checks, copy_checks, line_issues, draft_rewrite, self_critique, improved_copy, and the compliance_gate.
+Those last three are a real revision pass, not a formality. Write draft_rewrite as your first attempt at the new page. Then, in self_critique [{line,rule_id,problem,fix}], attack that draft against the rubric as hard as you graded the original — a critique that finds nothing is a critique you didn't do. Then write improved_copy with every one of those fixes applied. improved_copy is the version that ships.
 For line_issues, cover the HIGHEST-IMPACT lines (headlines, hero, section leads, any ungrounded claim) — up to ~20 entries; you don't need one row per line on a long page. Skip boilerplate (buy-box options, ingredient lists, subscription/legal text) unless it makes a false or ungrounded claim.
 The improved_copy MUST be the COMPLETE rewritten page in the template composition — never truncate it. If you're running low on room, shorten line_issues, not improved_copy.`;
   const user =
@@ -979,13 +889,15 @@ function renderThumbs(){
     STATE.moduleImages.splice(+b.dataset.rm,1); renderThumbs(); refreshButtons();
   });
 }
+// Module rules are the one place the app doesn't follow the sheet's ACTIVE-only rule,
+// and that applies in every mode — so say so in every mode rather than hiding it.
 function updateModuleRuleHint(){
   const el=document.getElementById("moduleRuleHint");
-  if(STATE.mode!=="module" || !STATE.synced){ el.style.display="none"; return; }
-  const adv=(STATE.moduleAdvisory||[]).map(r=>r["Rule ID"]);
+  if(!STATE.synced){ el.style.display="none"; return; }
+  const all=(STATE.moduleAll||[]).length, no=(STATE.moduleNoStatus||[]).map(r=>r["Rule ID"]);
   el.style.display="";
-  el.innerHTML = `Module rules from <b>Module_Checks</b>: ${(STATE.moduleChecks||[]).length} ACTIVE (these gate the compliance check)`
-    + (adv.length ? ` · ${adv.length} advisory — rules ${esc(adv.join(", "))} have no ACTIVE status, so they're scored and reported but don't block. Set Status to ACTIVE in the sheet to make them gate.` : "");
+  el.innerHTML = `All <b>${all}</b> module rules on <b>Module_Checks</b> are graded and gating.`
+    + (no.length ? ` Rules ${esc(no.join(", "))} have no ACTIVE status in the sheet — the app gates them anyway; set Status to ACTIVE so the sheet matches.` : "");
 }
 
 function moduleBrief(){
@@ -1007,8 +919,11 @@ function buildModulePrompt(brief){
   const evTxt=(label,arr)=>arr.length?`\n${label}:\n`+arr.map(x=>`  - [${x.problem||"general"}] ${x.text}${x.source?`  (source: ${x.source})`:""}`).join("\n"):"";
   const mand=(STATE.copyMandatory||[]).map(r=>r["Rule ID"]).join(", ")||"1, 2, 3";
   const opt =(STATE.copyOptional||[]).map(r=>r["Rule ID"]).join(", ")||"4, 5, 6";
-  const gateIds=(STATE.moduleChecks||[]).map(r=>r["Rule ID"]).join(", ")||"(none marked ACTIVE)";
-  const advIds=(STATE.moduleAdvisory||[]).map(r=>r["Rule ID"]).join(", ");
+  // Most module rules are written as a bare question with no 0/1/2 anchors — say which
+  // ones do have them so the model applies those literally and judges the rest openly.
+  const anchoredIds=(STATE.moduleAll||[]).filter(r=>r["Score 2 ="]).map(r=>r["Rule ID"]);
+  const anchored=anchoredIds.length
+    ? (anchoredIds.length===1?`Rule ${anchoredIds[0]} carries`:`Rules ${anchoredIds.join(", ")} carry`) : "";
 
   const system =
 `You are a senior conversion copywriter for First Day, a Bio-Matched children's multivitamin brand. You are working on ONE MODULE of a landing page — not a whole page. The attached image is the module's first version. Judge and rewrite only that module.
@@ -1016,9 +931,11 @@ function buildModulePrompt(brief){
 WORKFLOW (run every step, in order):
 1. READ THE IMAGE FIRST. Before judging anything, describe what is actually there: the picture or scene, the copy lines transcribed VERBATIM (with their type — h1/h2/h3/p/bullet/cta), the reading hierarchy, and what a parent understands in ONE SECOND of looking at it. If a line is unreadable in the image, say so rather than guessing at it. If module copy is also supplied as text below, that text is authoritative for the wording and the image is authoritative for the visual and the hierarchy.
 2. GRADE the first version against every MODULE RULE below (0/1/2 each) and against the COPY_CHECKS, line by line.
-3. REWRITE the module so it passes. Return the rewrite as its parts (headline, subhead, body, bullets, CTA) plus the whole thing as markdown, and state the VISUAL DIRECTION — the specific, ownable moment the image should show for this copy to land.
-4. RE-CHECK YOUR REWRITE against the same module rules and the same Copy_Checks, and report those scores separately from the first version's. Revise and re-score until it passes; report the final state, not your first attempt.
-5. Run the competitor swap test against: ${COMPETITORS.join(", ")}. Any line a competitor could equally say must be rewritten around a First-Day-only asset.
+3. DRAFT the rewrite (draft_rewrite) as markdown, in reading order — your first attempt at a module that passes.
+4. CRITIQUE THAT DRAFT in self_critique [{line,rule_id,problem,fix}], attacking it against the rubric as hard as you graded the first version. A critique that finds nothing is a critique you didn't do.
+5. WRITE THE FINAL MODULE (improved_module) with every fix from your critique applied — as its parts (headline, subhead, body, bullets, CTA) plus the whole thing as markdown, and state the VISUAL DIRECTION: the specific, ownable moment the image should show for this copy to land. This is the version that ships.
+6. RE-CHECK THE FINAL MODULE against the same module rules and the same Copy_Checks, and report those scores separately from the first version's. These scores are about improved_module, not your draft.
+7. Run the competitor swap test against: ${COMPETITORS.join(", ")}. Any line a competitor could equally say must be rewritten around a First-Day-only asset.
 
 HARD RULES:
 - NO hallucination. Every dosage, ingredient, study, statistic, or claim in the rewrite MUST come from the Product Info or Approved Evidence below. If the first version makes an unsupported claim, flag it and either ground it in the evidence or cut it — never invent a source.
@@ -1026,10 +943,9 @@ HARD RULES:
 - Stay inside one module. Do not invent neighbouring sections or write a whole page.
 - Any falsifiable claim scoring 2 must map to a Product Info / Fact Sheet ID, or the gate fails.
 
-MODULE RULES — score the module against every one of these:
-${moduleRuleLines(STATE.moduleAll||[])}
-
-MODULE RULE STATUS: rules ${gateIds} are ACTIVE and GATING — a failure there blocks the compliance gate.${advIds?` Rules ${advIds} are ADVISORY (no ACTIVE status in the sheet): score and report them, set gating=false, but do not block the gate on them alone.`:""}
+MODULE RULES — score the module against every one of these. All of them are GATING: a 0 on any rule blocks the compliance gate, and a 1 has to be justified.
+${ruleLines(STATE.moduleAll||[])}
+${anchored?`${anchored} explicit 0/1/2 anchors — apply those literally. `:""}The rules stated only as a question have no anchors in the sheet: score 2 when the module clearly and specifically satisfies the question, 1 when it partly does, 0 when it doesn't, and say what you judged it on in the issue field.
 
 COPY_CHECKS — score every line 0/1/2:
 ${ruleLines(STATE.copyChecks||[])}
@@ -1111,8 +1027,7 @@ function renderModule(r, model){
     let s=`<div class="section-title">${title}</div><table><tr><th>#</th><th>Rule</th><th>Score</th>${
       withPass?"<th>Pass</th>":""}<th>${extra}</th></tr>`;
     rows.forEach(c=>{
-      const adv=c.gating===false?` <span class="tag">advisory</span>`:"";
-      s+=`<tr><td>${esc(c.id||"")}</td><td>${esc(c.name||"")}${adv}</td>
+      s+=`<tr><td>${esc(c.id||"")}</td><td>${esc(c.name||"")}</td>
         <td><span class="score s${c.score}">${c.score}</span></td>${
         withPass?`<td><span class="check ${c.pass?"y":"n"}">${c.pass?"✓":"✕"}</span></td>`:""}
         <td>${esc(c.issue||c.note||"")}${c.fix?`<br><i>fix: ${esc(c.fix)}</i>`:""}</td></tr>`;
@@ -1207,9 +1122,9 @@ TASKS:
 2. Line-by-line: for each line, quote it verbatim, classify its type, score 0/1/2 against the Copy_Checks, list the checks that drove the score, mark grounded plus the Fact Sheet ID for any falsifiable claim, give concise notes and an evidence-safe rewrite (or blank).
 3. Compliance gate: pass/fail + blockers. Any falsifiable claim scoring 2 MUST map to a Product Info ID or the gate fails, and every line must satisfy the Copy_Checks pass logic.
 
-MODULE RULES:
-${moduleRuleLines(STATE.moduleAll||[])}
-ACTIVE and gating: ${(STATE.moduleChecks||[]).map(r=>r["Rule ID"]).join(", ")||"(none)"}.${(STATE.moduleAdvisory||[]).length?` Advisory only (report, don't block): ${STATE.moduleAdvisory.map(r=>r["Rule ID"]).join(", ")}.`:""}
+MODULE RULES — every one of these is gating; a 0 on any of them fails the module:
+${ruleLines(STATE.moduleAll||[])}
+Where a rule is stated only as a question with no 0/1/2 anchors, score 2 when the module clearly and specifically satisfies it, 1 when it partly does, 0 when it doesn't, and say what you judged it on.
 
 COPY_CHECKS — score every line 0/1/2:
 ${ruleLines(STATE.copyChecks||[])}

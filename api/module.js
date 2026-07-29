@@ -1,7 +1,7 @@
 import { checkAccess } from '../lib/auth.js';
 import { readJson } from '../lib/http.js';
 import { callAnthropic } from '../lib/anthropic.js';
-import { EMIT_MODULE } from '../lib/tools.js';
+import { MODULE_SCHEMA } from '../lib/tools.js';
 
 // Module mode reads an image, grades it, rewrites the module, then re-checks the
 // rewrite — same shape of work as /api/audit, so it gets the same headroom.
@@ -36,7 +36,7 @@ export default async function handler(req, res){
 
     const result = await callAnthropic({
       system, user, model, images: imgs,
-      tool: EMIT_MODULE, toolName: 'emit_module', maxTokens: 12000
+      schema: MODULE_SCHEMA, maxTokens: 16000
     });
     res.status(200).json(result);
   } catch (e){

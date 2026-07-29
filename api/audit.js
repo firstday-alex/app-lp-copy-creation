@@ -1,7 +1,7 @@
 import { checkAccess } from '../lib/auth.js';
 import { readJson } from '../lib/http.js';
 import { callAnthropic } from '../lib/anthropic.js';
-import { EMIT_AUDIT } from '../lib/tools.js';
+import { AUDIT_SCHEMA } from '../lib/tools.js';
 
 // Audit grades an existing page AND rewrites it, so its output is large — give
 // it a bigger token budget and more wall-clock than generate/review.
@@ -13,7 +13,7 @@ export default async function handler(req, res){
   try {
     const { system, user, model } = await readJson(req);
     if (!system || !user){ res.status(400).json({ error: 'Missing system/user prompt.' }); return; }
-    const result = await callAnthropic({ system, user, model, tool: EMIT_AUDIT, toolName: 'emit_audit', maxTokens: 12000 });
+    const result = await callAnthropic({ system, user, model, schema: AUDIT_SCHEMA, maxTokens: 16000 });
     res.status(200).json(result);
   } catch (e){
     res.status(502).json({ error: e.message });
