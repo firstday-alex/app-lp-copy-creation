@@ -29,7 +29,11 @@ Same loop as the LP, scoped to a **single module** and driven by an **image of t
    - **Re-check the rewrite** against the same module rules and Copy_Checks, reported separately from the first version's scores, alongside the competitor swap test, claim→fact-sheet mapping, and the PASS/FAIL gate.
 4. **Independent check** — *Send module for independent check* runs the rewrite past the same separate reviewer agent used for LPs, scoped to one module (it never sees the v1 image, so it scores the new copy on the rules and evidence alone) and saves it as a shared review draft with the same accept / notes / CSV board.
 
-**A note on rule status.** The per-module rules live on the **Module_Checks** tab (there is no tab named `module_rules`). Four of its nine rows — **2, 7, 8, 9** — have no `ACTIVE` status, so the README's *"only ACTIVE rules apply"* convention would drop them entirely, including header/paragraph congruency and the mobile-fold check. Module mode instead scores **all nine** and labels them: **ACTIVE rules gate** the compliance gate, the rest are **advisory** — scored and reported, but they don't block. The Brief panel shows the split. Set `Status` to `ACTIVE` in the sheet to promote an advisory rule to gating.
+**Module rules are the one exception to ACTIVE-only.** The per-module rules live on the **Module_Checks** tab (there is no tab named `module_rules`). Four of its nine rows — **2, 7, 8, 9** — have no `ACTIVE` status, so the sheet's *"only ACTIVE rules apply"* convention would silently drop a third of the module rubric, including header/paragraph congruency and the mobile-fold check. So **all nine module rules are graded and gating**, in every mode that grades modules: *Write new*, *Grade page*, *One module*, and both reviewer passes. A 0 on any of them blocks the compliance gate.
+
+Only `Module_Checks` gets this treatment — `LP_Checks` and `Copy_Checks` are fully `ACTIVE` in the sheet and still follow the ACTIVE-only rule. The Brief panel states the divergence in every mode; setting `Status` to `ACTIVE` on those four rows makes the sheet agree with what the app already enforces.
+
+Most module rules are written as a bare question with no `Score 0/1/2 =` anchors (only rule 1 has them). The prompts say which rules have anchors so those get applied literally, and instruct the model to score the unanchored ones 2 / 1 / 0 on whether the module clearly, partly, or doesn't satisfy the question — and to state what it judged that on. Filling in the anchor columns in the sheet will tighten those scores.
 
 ## Review drafts (shared)
 
@@ -51,13 +55,13 @@ Published Google Sheet (read-only), fetched as CSV per tab:
 | README | The quality-system spec the app implements |
 | Templates | Page templates + their composition (Listicle, Behind the Science, Broad PDP) |
 | LP_Checks | Holistic whole-page requirements R1–R7 (must be present) |
-| Module_Checks | Per-section requirements (each module must pass) |
+| Module_Checks | Per-module requirements (each module must pass) — **all rows apply regardless of Status**, see [One module](#one-module--mode) |
 | Copy_Checks | Per-line rules — every h1/h2/h3/p must satisfy **all of 1–3 and at least one of 4–6** (0/1/2) |
 | Problems | Product × problem taxonomy, with primary (★) flag — drives the angle picker |
 | Hooks / Claims / Quotes | Pre-approved evidence, tagged by product + problem (Quotes = customer/pediatrician) |
 | Product_Info | Products, SKUs, nutrient dosages, links (the only source for dosages) |
 
-The three grading layers (LP_Checks holistic → Module_Checks per section → Copy_Checks per line) are applied in both generation and the independent review. Only **ACTIVE**-status rules are used.
+The three grading layers (LP_Checks holistic → Module_Checks per module → Copy_Checks per line) are applied in generation, the audit, and the independent review. Only **ACTIVE**-status rules are used — **except on Module_Checks**, where every row applies (see above).
 
 The app is **read-only against the sheet** — it never writes back to the sheet or any First Day platform. (Review drafts are the app's own data, stored in its Postgres database, not the sheet.)
 
