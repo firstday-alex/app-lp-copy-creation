@@ -57,8 +57,15 @@
   .row{display:flex;gap:8px}
   .row>*{flex:1}
   .actions{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
-  .modeseg{display:flex;gap:4px;background:var(--chip);border-radius:10px;padding:4px;margin-bottom:14px}
-  .modeseg button{flex:1;border:none;background:transparent;color:var(--muted);font-weight:600;font-size:12px;padding:7px 6px;border-radius:7px;cursor:pointer;white-space:nowrap}
+  /* A grid, not a flex row: four nowrap labels can't shrink below their text, so in the
+     340px sidebar the fourth overflowed the panel and got painted over by Output. Two
+     columns fit the sidebar; a fifth mode would wrap to a third row on its own. */
+  .modeseg{display:grid;grid-template-columns:1fr 1fr;gap:4px;background:var(--chip);
+    border-radius:10px;padding:4px;margin-bottom:14px}
+  @media(max-width:1200px){ .modeseg{grid-template-columns:repeat(4,1fr)} }  /* panel goes full-width here */
+  .modeseg button{border:none;background:transparent;color:var(--muted);font-weight:600;
+    font-size:12px;padding:7px 6px;border-radius:7px;cursor:pointer;
+    white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}
   .modeseg button.active{background:var(--panel);color:var(--ink);box-shadow:var(--shadow)}
   /* module mode: first-version image upload */
   .dropzone{margin-top:4px;border:1.5px dashed var(--line);border-radius:12px;padding:18px 14px;text-align:center;
