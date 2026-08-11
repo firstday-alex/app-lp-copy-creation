@@ -230,13 +230,6 @@
       </div>
 
       <div id="pageFields" style="display:none">
-        <label class="field">Source <span>· read from the live store, never written to</span></label>
-        <select id="srcKind">
-          <option value="theme_template">Theme page template</option>
-          <option value="page">Online Store page</option>
-        </select>
-        <label class="field">Which one</label>
-        <select id="srcRef"><option value="">(loading…)</option></select>
         <label class="field">Options per slot <span>· 1 stays closest to what's live</span></label>
         <select id="variantCount">
           <option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option>
@@ -450,19 +443,105 @@ function fill(sel, items, fmt){
     const v = fmt?fmt(it):it; o.value=v.value; o.innerHTML=v.label; sel.appendChild(o); });
 }
 function populateUI(){
-  const tSel=document.getElementById("template");
-  fill(tSel, STATE.templates, t=>({value:t.name,label:t.name}));
-  updateComposition();
+  refreshTemplateSelect();
 
   const pSel=document.getElementById("product");
   fill(pSel, STATE.products, p=>({value:p,label:p}));
   updateProblems();
   updateEvidence();
 }
+
+// The Template dropdown means "the thing you're working on", so what it lists depends on
+// the mode: the sheet's page shapes when composing, and the live store's actual pages when
+// writing into one. Saved ones are pinned to the top of that second list — the whole point
+// of bookmarking is that those are the pages someone keeps coming back to.
+const srcKey = (kind, ref) => kind + "|" + ref;
+function refreshTemplateSelect(){
+  const sel=document.getElementById("template");
+  const keep=sel.value;
+  const restore=()=>{
+    if([...sel.options].some(o=>o.value===keep)) sel.value=keep;
+    updateComposition();
+  };
+
+  if(STATE.mode!=="page"){
+    fill(sel, STATE.templates, t=>({value:t.name,label:t.name}));
+    restore(); return;
+  }
+
+  sel.innerHTML="";
+  const src=STATE.sources, marks=STATE.bookmarks||[];
+  const opt=(value,label)=>{ const o=document.createElement("option"); o.value=value; o.textContent=label; return o; };
+  const templates=(src&&src.templates)||[], pages=(src&&src.pages)||[];
+  const live=new Set([
+    ...templates.map(t=>srcKey("theme_template",t.filename)),
+    ...pages.map(p=>srcKey("page",p.id))
+  ]);
+  const marked=new Set(marks.map(m=>srcKey(m.source.kind,m.source.ref)));
+
+  if(marks.length){
+    const g=document.createElement("optgroup"); g.label="★ Saved";
+    marks.forEach(m=>{
+      const k=srcKey(m.source.kind,m.source.ref);
+      // A saved source that has since left the theme still belongs in the list — its
+      // snapshot is exactly what a bookmark is for. Say so rather than offering a read
+      // that will 404.
+      const gone = src && !live.has(k);
+      g.appendChild(opt(k, `★ ${m.source.label||m.source.ref}${gone?"  (snapshot — no longer in the theme)":""}`));
+    });
+    sel.appendChild(g);
+  }
+  const rest=(label,items)=>{
+    const left=items.filter(i=>!marked.has(i.key));   // saved ones appear once, at the top
+    if(!left.length) return;
+    const g=document.createElement("optgroup"); g.label=label;
+    left.forEach(i=>g.appendChild(opt(i.key,i.label)));
+    sel.appendChild(g);
+  };
+  rest("Theme page templates", templates.map(t=>({
+    key:srcKey("theme_template",t.filename), label:t.filename.replace(/^templates\//,"") })));
+  rest("Online Store pages", pages.map(p=>({
+    key:srcKey("page",p.id), label:`${p.title||p.handle} · /${p.handle}` })));
+
+  if(!sel.options.length){
+    sel.appendChild(opt("", src?"(no page templates or pages found)":"(loading the live theme…)"));
+  }
+  restore();
+}
+
+// The source the Template dropdown currently names, or null in the other modes.
+function currentSource(){
+  const v=val("template"), i=v.indexOf("|");
+  if(i<0) return null;
+  const kind=v.slice(0,i), ref=v.slice(i+1);
+  const src=STATE.sources;
+  const mark=(STATE.bookmarks||[]).find(m=>m.source.kind===kind && m.source.ref===ref);
+  let label = kind==="page" ? ref : ref.replace(/^templates\//,"");
+  const page=((src&&src.pages)||[]).find(x=>x.id===ref);
+  if(page) label=page.title||page.handle;
+  if(mark&&mark.source.label) label=mark.source.label;
+  const inTheme = !src ? null : (kind==="page"
+    ? ((src.pages||[]).some(x=>x.id===ref))
+    : ((src.templates||[]).some(x=>x.filename===ref)));
+  return { kind, ref, label, inTheme, bookmarkId: mark?mark.id:null };
+}
+
 function updateComposition(){
+  const el=document.getElementById("composition");
+  if(STATE.mode==="page"){
+    const s=currentSource();
+    if(!s){ el.textContent="—"; return; }
+    const p=pageState();
+    const loaded = p.source && p.source.kind===s.kind && p.source.ref===s.ref;
+    const mark=(STATE.bookmarks||[]).find(m=>m.id===s.bookmarkId);
+    el.innerHTML=`<b>${esc(s.label)}</b> → ${s.kind==="page"?"Online Store page body":"theme page template"}`
+      + (loaded ? ` · ${p.counts.total} slots · ${p.counts.empty} empty`
+        : mark   ? ` · saved: ${mark.counts.total} slots · ${mark.counts.empty} empty · ${mark.draftCount||0} drafted`
+                 : ` · not read yet`);
+    return;
+  }
   const t=STATE.templates.find(x=>x.name===val("template"));
-  document.getElementById("composition").innerHTML =
-    t ? `<b>${esc(t.name)}</b> → ${esc(t.composition||"—")}` : "—";
+  el.innerHTML = t ? `<b>${esc(t.name)}</b> → ${esc(t.composition||"—")}` : "—";
 }
 function updateProblems(){
   const prod=val("product");
@@ -1227,41 +1306,47 @@ async function loadShopifyStatus(){
   }catch(e){ STATE.shopify={configured:false, error:e.message}; return STATE.shopify; }
 }
 
+// Both halves of the dropdown come from here: the live theme's sources and the saved list.
+// They load together so the pinned entries and the rest are never briefly out of step.
 async function loadSources(){
   const hint=document.getElementById("srcHint");
   hint.textContent="Reading the live theme…";
+  const marks=await fetchBookmarks().catch(()=>null);
+  if(marks) STATE.bookmarks=marks;
   try{
     const d=await api("/api/outline?op=sources");
     STATE.sources=d;
-    fillSources();
+    const saved=(STATE.bookmarks||[]).length;
     hint.innerHTML=`Live theme <b>${esc(d.theme.name)}</b> · ${d.templates.length} page template${d.templates.length===1?"":"s"} · ${d.pages.length} page${d.pages.length===1?"":"s"}`
+      + (saved?` · ${saved} saved (pinned to the top)`:"")
       + (d.pagesError?`<br><span class="tag bad">pages unavailable</span> ${esc(d.pagesError)}`:"");
   }catch(e){
     STATE.sources=null;
-    document.getElementById("srcRef").innerHTML=`<option value="">(none)</option>`;
-    hint.innerHTML=`<span class="tag bad">not loaded</span> ${esc(e.message)}`;
+    // Saved templates still open from their snapshots with the store unreachable, so say
+    // that rather than implying nothing can be done.
+    hint.innerHTML=`<span class="tag bad">live theme not loaded</span> ${esc(e.message)}`
+      + ((STATE.bookmarks||[]).length?`<br>${STATE.bookmarks.length} saved template${STATE.bookmarks.length===1?"":"s"} can still be opened from their snapshots.`:"");
   }
+  refreshTemplateSelect();
   refreshButtons();
-}
-function fillSources(){
-  const d=STATE.sources, rSel=document.getElementById("srcRef");
-  rSel.innerHTML="";
-  if(!d){ rSel.innerHTML=`<option value="">(none)</option>`; return; }
-  const items = val("srcKind")==="page"
-    ? d.pages.map(p=>({value:p.id, label:`${p.title||p.handle} · /${p.handle}`}))
-    : d.templates.map(t=>({value:t.filename, label:t.filename.replace(/^templates\//,"")}));
-  if(!items.length){ rSel.innerHTML=`<option value="">(none found)</option>`; return; }
-  items.forEach(it=>{ const o=document.createElement("option"); o.value=it.value; o.textContent=it.label; rSel.appendChild(o); });
 }
 
 // `override` lets a caller name the source explicitly instead of trusting the pickers.
 // Re-reading a saved template must hit the template that was saved, and the pickers may
 // not have caught up to it yet (or at all, if the source has since been deleted).
 async function loadPage(override){
-  const o = override && override.ref ? override : null;
-  const kind = o ? o.kind : val("srcKind");
-  const ref  = o ? o.ref  : val("srcRef");
-  if(!ref){ toast("Pick a template or page first"); return; }
+  const o = (override && override.ref) ? override : currentSource();
+  if(!o || !o.ref){ toast("Pick a page template or page first"); return; }
+  // A saved source we can't confirm is live — removed from the theme (false), or the theme
+  // never loaded at all (null) — opens from its snapshot. That is what the bookmark is for,
+  // and it beats a 404 or a Shopify error. `pgFresh` passes no bookmarkId, so an explicit
+  // "re-read from the live store" always attempts the live read and reports what went wrong.
+  if(o.inTheme!==true && o.bookmarkId){
+    toast(o.inTheme===false ? "No longer in the theme — opening the saved snapshot"
+                            : "Live theme unavailable — opening the saved snapshot");
+    openBookmark(o.bookmarkId); return;
+  }
+  const kind=o.kind, ref=o.ref;
   const p=pageState();
   document.getElementById("outMeta").textContent="";
   setOut(`<div class="empty"><span class="spinner"></span><p>Reading ${esc(ref)} from the live store…</p></div>`);
@@ -1276,10 +1361,12 @@ async function loadPage(override){
     // shouldn't hide the outline — degrade to "no drafts" and say so via the toast.
     p.drafts = await api("/api/slot-drafts?sourceRef="+encodeURIComponent(p.source.ref))
       .catch(e=>{ toast("Couldn't load saved drafts: "+e.message); return {}; });
-    const marks = await fetchBookmarks().catch(()=>[]);
-    const hit = marks.find(m=>m.source.ref===p.source.ref && m.source.kind===p.source.kind);
+    const marks = await fetchBookmarks().catch(()=>null);
+    if(marks) STATE.bookmarks=marks;
+    const hit = (STATE.bookmarks||[]).find(m=>m.source.ref===p.source.ref && m.source.kind===p.source.kind);
     p.bookmarkId = hit ? hit.id : null;
     renderOutline();
+    updateComposition();   // the box under the dropdown now knows the real slot counts
   }catch(e){
     setOut(`<div class="gate fail">⚠︎ Couldn't read the page</div>
       <div class="copyblock" style="border-color:var(--bad)">${esc(e.message)}</div>
@@ -1549,7 +1636,7 @@ PASS CRITERIA: every returned variant satisfies the Copy_Checks logic with no ru
 `THE PAGE
   Source: ${p.source?p.source.label:"(unknown)"} — ${p.source&&p.source.kind==="page"?"an Online Store page body":"a theme page template"}${p.source&&p.source.themeName?` on the live theme "${p.source.themeName}"`:""}
   Slots on the page: ${p.counts.total} (${p.counts.empty} of them empty)
-  Page shape it should read as: ${b.template} — composition: ${b.composition}
+  Shape it already has, in order: ${p.outline.map(n=>n.label||n.id).join(" → ")||"(flat — no sections)"}
 
 BRIEF
   Product: ${b.product}
@@ -1626,9 +1713,14 @@ async function exportSlots(fmt){
 
 /* ---------- saved templates (bookmarks) ---------- */
 function fetchBookmarks(){ return api("/api/bookmarks"); }
+// Cached because the Template dropdown re-reads it on every mode switch and every save.
+async function refreshBookmarkCache(){
+  try{ STATE.bookmarks=await fetchBookmarks(); }catch(e){ /* keep whatever we had */ }
+  return STATE.bookmarks||[];
+}
 async function updateBookmarkCount(){
   const el=document.getElementById("markCount"); if(!el) return;
-  try{ el.textContent=(await fetchBookmarks()).length; }catch(e){ el.textContent="!"; }
+  try{ el.textContent=(await refreshBookmarkCache()).length; }catch(e){ el.textContent="!"; }
 }
 async function toggleBookmark(){
   const p=pageState();
@@ -1639,15 +1731,28 @@ async function toggleBookmark(){
     if(!confirm("Remove this from Saved?\n\nThe copy drafted into its slots is kept — re-save the template and it comes back.")) return;
     try{
       await api("/api/bookmarks/"+encodeURIComponent(p.bookmarkId),{method:"DELETE"});
-      p.bookmarkId=null; toast("Removed from Saved"); renderOutline(); updateBookmarkCount();
+      p.bookmarkId=null; toast("Removed from Saved");
+      await afterBookmarkChange();
     }catch(e){ toast("Failed: "+e.message); }
     return;
   }
   try{
     const b=await api("/api/bookmarks",{method:"POST",body:JSON.stringify({
       source:p.source, outline:p.outline, createdBy:reviewerName() })});
-    p.bookmarkId=b.id; toast("Saved for quick reference"); renderOutline(); updateBookmarkCount();
+    p.bookmarkId=b.id; toast("Saved — pinned to the top of the Template list");
+    await afterBookmarkChange();
   }catch(e){ toast("Save failed: "+e.message); }
+}
+// Saving or removing changes what's pinned, so the dropdown has to be rebuilt — and
+// rebuilding it must not lose the selection, which is why refreshTemplateSelect restores it.
+// `rerender` is opt-out because this also fires from the ⭐ Saved list, where redrawing the
+// outline would replace the list the user is looking at with an empty-state message.
+async function afterBookmarkChange(rerender){
+  await refreshBookmarkCache();
+  refreshTemplateSelect();
+  if(rerender!==false){ renderOutline(); updateComposition(); }
+  const el=document.getElementById("markCount");
+  if(el) el.textContent=(STATE.bookmarks||[]).length;
 }
 async function renderBookmarksList(){
   document.getElementById("outMeta").textContent="· saved templates";
@@ -1680,9 +1785,16 @@ async function renderBookmarksList(){
   document.querySelectorAll("[data-bopen]").forEach(btn=>btn.onclick=()=>openBookmark(btn.dataset.bopen));
   document.querySelectorAll("[data-bdel]").forEach(btn=>btn.onclick=async()=>{
     if(!confirm("Remove this from Saved?\n\nThe copy drafted into its slots is kept.")) return;
-    try{ await api("/api/bookmarks/"+encodeURIComponent(btn.dataset.bdel),{method:"DELETE"});
-         toast("Removed"); renderBookmarksList(); updateBookmarkCount(); }
-    catch(e){ toast("Failed: "+e.message); }
+    try{
+      const gone=btn.dataset.bdel;
+      await api("/api/bookmarks/"+encodeURIComponent(gone),{method:"DELETE"});
+      // If the page on screen was the one just unsaved, its ★ button is now wrong.
+      const p=pageState();
+      if(p.bookmarkId===gone) p.bookmarkId=null;
+      toast("Removed");
+      await afterBookmarkChange(false);   // unpins it in the dropdown, keeps this list up
+      renderBookmarksList();
+    }catch(e){ toast("Failed: "+e.message); }
   });
 }
 async function openBookmark(id){
@@ -1697,14 +1809,15 @@ async function openBookmark(id){
     p.bookmarkId=b.id; p.fromSnapshot=true; p.snapshotAt=b.updatedAt;
     indexOutline();
     setMode("page");
-    // Point the pickers at it so "Re-read from the live store" hits the right source.
-    const kSel=document.getElementById("srcKind");
-    kSel.value=b.source.kind;
-    // Don't kick off a second sources fetch if setMode already started one.
-    if(!STATE.sources && !STATE.sourcesLoading) await loadSources(); else fillSources();
-    const rSel=document.getElementById("srcRef");
-    if([...rSel.options].some(o=>o.value===b.source.ref)) rSel.value=b.source.ref;
+    // Point the dropdown at it, so the panel agrees with what's on screen and "Re-read from
+    // the live store" hits this source rather than whatever was selected before.
+    await refreshBookmarkCache();
+    refreshTemplateSelect();
+    const sel=document.getElementById("template");
+    const key=srcKey(b.source.kind, b.source.ref);
+    if([...sel.options].some(o=>o.value===key)) sel.value=key;
     renderOutline();
+    updateComposition();
   }catch(e){
     setOut(`<div class="gate fail">⚠︎ Couldn't open it</div><div class="copyblock" style="border-color:var(--bad)">${esc(e.message)}</div>`);
   }
@@ -1884,7 +1997,7 @@ function refreshButtons(){
   const moduleReady = STATE.synced && val("moduleName").trim() && STATE.moduleImages.length>0;
   // Reading a page needs Shopify, not the sheet. Writing into its slots needs both, and
   // writeSlots() says so rather than the Read button pretending to be the blocker.
-  const pageReady  = !!(STATE.sources && val("srcRef"));
+  const pageReady  = !!currentSource();
   document.getElementById("loadPageBtn").disabled=!pageReady;
   document.getElementById("genBtn").disabled=!writeReady;
   document.getElementById("promptBtn").disabled=!writeReady;
@@ -1893,10 +2006,13 @@ function refreshButtons(){
   document.getElementById("moduleBtn").disabled=!moduleReady;
   document.getElementById("modulePromptBtn").disabled=!moduleReady;
   const pageHint = () => {
+    const saved=(STATE.bookmarks||[]).length;
     if(STATE.shopify && STATE.shopify.configured===false)
       return "Shopify isn't configured on the server — set SHOPIFY_STORE_DOMAIN and SHOPIFY_ADMIN_TOKEN (scopes: read_themes, read_content).";
-    if(!STATE.sources) return "Loading the live theme's page templates…";
-    if(!pageReady) return "Pick a page template or an Online Store page.";
+    if(!STATE.sources) return saved
+      ? `Live theme unavailable — ${saved} saved template${saved===1?"":"s"} can still be opened from their snapshots.`
+      : "Loading the live theme's page templates…";
+    if(!pageReady) return "Pick a page template or an Online Store page in Template above.";
     if(!STATE.synced) return "Ready to read. Sync the sheet before writing — the rules and evidence come from it.";
     return "Ready. Read the page, then write its empty or selected slots.";
   };
@@ -1928,8 +2044,10 @@ function setMode(mode){
   document.getElementById("tmplHint").textContent =
     mode==="audit" ? "· the page shape to rewrite into"
     : mode==="module" ? "· the page this module belongs to"
-    : mode==="page" ? "· the shape the live page should read as"
+    : mode==="page" ? "· a real page from the live store · ★ saved first"
     : "· the page you want to write";
+  // Switching in or out of page mode swaps what the dropdown lists entirely.
+  refreshTemplateSelect();
   // The theme's page templates are fetched on first entry to the mode, not on load —
   // most sessions never open it, and it's two Shopify round trips.
   if(mode==="page" && !STATE.sources && !STATE.sourcesLoading){
@@ -1943,11 +2061,9 @@ function setMode(mode){
 document.getElementById("syncBtn").onclick=syncSheet;
 document.getElementById("draftsBtn").onclick=renderDraftsList;
 document.getElementById("marksBtn").onclick=renderBookmarksList;
-document.getElementById("srcKind").onchange=()=>{ fillSources(); refreshButtons(); };
-document.getElementById("srcRef").onchange=refreshButtons;
 document.getElementById("loadPageBtn").onclick=()=>loadPage();
 document.getElementById("reloadSrcBtn").onclick=loadSources;
-document.getElementById("template").onchange=updateComposition;
+document.getElementById("template").onchange=()=>{ updateComposition(); refreshButtons(); };
 document.getElementById("product").onchange=()=>{updateProblems();updateEvidence();};
 document.getElementById("title").oninput=refreshButtons;
 document.getElementById("existingCopy").oninput=refreshButtons;

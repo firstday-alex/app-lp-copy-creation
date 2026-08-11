@@ -39,7 +39,7 @@ Most module rules are written as a bare question with no `Score 0/1/2 =` anchors
 
 Instead of writing a page from a brief, this reads a page that already exists, breaks it into the individual copy slots it's made of, and writes into them one at a time. **Read-only against Shopify** — it never writes back.
 
-1. **Pick a source.** Either a **theme page template** (`templates/page.*.json` from the published theme) or an **Online Store page** (its HTML body). Needs `SHOPIFY_STORE_DOMAIN` + `SHOPIFY_ADMIN_TOKEN` on the server; see [`DEPLOY.md`](DEPLOY.md).
+1. **Pick a page in the Template dropdown.** In this mode that dropdown lists the live store instead of the sheet — **★ Saved** first, then **Theme page templates** (`templates/page.*.json` from the published theme), then **Online Store pages**. Needs `SHOPIFY_STORE_DOMAIN` + `SHOPIFY_ADMIN_TOKEN` on the server; see [`DEPLOY.md`](DEPLOY.md).
 2. **Read the page.** It comes back as an outline of copy slots — headings, body, bullets, CTAs, quotes, image alt text — nested so a heading owns what follows it. Slots that exist but have never been written are marked **empty**; that state is the point of the mode, so blank copy is kept, never pruned.
 3. **Write slots.** *Write empty slots* fills every unwritten one; *Write selected* takes whatever you tick (40 max per pass). Each slot gets 1–5 options: **option 1 stays closest to what's live**, each later one is a bigger swing. Click an option to take it, or type your own.
 4. **Everything is graded.** Options are scored against **Copy_Checks**, grounded against the fact sheet and approved evidence, checked for length against the slot's kind, and passed through the competitor swap test — the same bar as every other mode. A fact the model needed and didn't have shows up inline as `[VERIFY: …]` rather than being guessed at.
@@ -58,7 +58,11 @@ The `path` on each slot (`sections.problem.blocks.b2.settings.text`) is a write-
 
 ## Saved templates (⭐)
 
-Bookmark a page or template and it lands in **⭐ Saved** in the header, stored with a **snapshot of its outline** — so opening it is instant and works even when the store is unreachable. *Re-read from the live store* refreshes it and flags any slot whose copy has moved since a draft was written.
+Bookmark a page or template and it does two things: it lands in **⭐ Saved** in the header, and it gets **pinned to the top of the Template dropdown** under a `★ Saved` group, so the pages a writer keeps returning to are the first thing in the list rather than buried among every template in the theme. A saved source appears once — pinned at the top, not also down in its own group.
+
+Each bookmark stores a **snapshot of its outline**, so opening it is instant and works even when the store is unreachable. *Re-read from the live store* refreshes it and flags any slot whose copy has moved since a draft was written. If a saved source can't be confirmed live — removed from the theme, or the theme didn't load — selecting it opens the snapshot and says so, rather than failing on a read that can't succeed.
+
+One control means one thing: in the other three modes the Template dropdown is still the sheet's page shapes. In 📄 Live page mode the real page's own section order **is** the shape, and that's what gets passed to the writer — a more honest description than a composition string.
 
 Removing a bookmark removes the shortcut, **not the copy**: slot drafts are keyed independently of bookmarks, so a writer can draft into a page without saving it, and re-saving later brings the work back. (`DELETE /api/bookmarks/:id?purgeDrafts=1` is the explicit "throw the copy away too" path.)
 
