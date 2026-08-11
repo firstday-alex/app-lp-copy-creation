@@ -122,10 +122,32 @@
   .rv-accept{width:18px;height:18px;accent-color:var(--good);cursor:pointer}
   .tag{display:inline-block;font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:6px;background:var(--chip);color:var(--muted)}
   .tag.bad{background:color-mix(in srgb,var(--bad) 16%,transparent);color:var(--bad)}
+  .tag.warn{background:color-mix(in srgb,var(--warn) 20%,transparent);color:var(--warn)}
+  .tag.good{background:color-mix(in srgb,var(--good) 18%,transparent);color:var(--good)}
+  .tag.acc{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent)}
   .drafts{display:flex;flex-direction:column;gap:10px;margin-top:10px}
   .draft-card{display:flex;gap:12px;align-items:center;justify-content:space-between;
     border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--bg)}
   .draft-main{min-width:0} .draft-act{display:flex;gap:8px;flex:none}
+  /* slot mode: a real page's copy slots */
+  .ohead{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;
+    color:var(--muted);margin:16px 0 4px}
+  .ohead.blk{text-transform:none;letter-spacing:0;font-weight:600;font-size:11.5px;opacity:.85}
+  .slot{border:1px solid var(--line);border-radius:12px;padding:9px 11px;margin:6px 0;background:var(--bg)}
+  .slot.empty{border-style:dashed;border-color:color-mix(in srgb,var(--warn) 55%,var(--line))}
+  .slot.sel{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 16%,transparent)}
+  .slot-top{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+  .slot-top .grow{flex:1;min-width:60px;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .slot-cb{width:16px;height:16px;flex:none;margin:0;accent-color:var(--accent);cursor:pointer}
+  .slot-store{font-size:13px;margin:6px 0 0;white-space:pre-wrap}
+  .slot-store.none{color:var(--muted);font-style:italic}
+  .slot-draft{margin-top:6px;min-height:38px;font-size:13px;background:var(--panel)}
+  .slot-draft.dirty{border-color:var(--warn)}
+  .variants{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+  .variant{border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--panel);
+    cursor:pointer;font-size:13px;transition:.12s}
+  .variant:hover{border-color:var(--accent)}
+  .variant .vmeta{margin-top:5px;font-size:11.5px;color:var(--muted);display:flex;gap:7px;flex-wrap:wrap;align-items:center}
 </style>
 </head>
 <body>
@@ -134,6 +156,7 @@
   <div class="sync">
     <span class="status-dot" id="statusDot"></span>
     <span id="statusText">Not synced</span>
+    <button class="btn ghost" id="marksBtn">⭐ Saved<span class="pill" id="markCount">0</span></button>
     <button class="btn ghost" id="draftsBtn">📋 Drafts<span class="pill" id="draftCount">0</span></button>
     <button class="btn ghost" id="syncBtn">↻ Sync sheet</button>
   </div>
@@ -148,6 +171,7 @@
         <button type="button" class="active" data-mode="write">✍️ Write new</button>
         <button type="button" data-mode="audit">🔍 Grade page</button>
         <button type="button" data-mode="module">🧩 One module</button>
+        <button type="button" data-mode="page">📄 Live page</button>
       </div>
 
       <label class="field">Template <span id="tmplHint">· the page you want to write</span></label>
@@ -205,6 +229,14 @@
         <textarea id="moduleCopy" placeholder="Paste the module's copy if you have it — otherwise it's read off the image."></textarea>
       </div>
 
+      <div id="pageFields" style="display:none">
+        <label class="field">Options per slot <span>· 1 stays closest to what's live</span></label>
+        <select id="variantCount">
+          <option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option>
+        </select>
+        <div class="hint" id="srcHint">Reading the live theme…</div>
+      </div>
+
       <div class="actions" id="writeActions">
         <button class="btn primary" id="genBtn" disabled>Generate copy</button>
         <button class="btn" id="promptBtn" disabled>Copy full prompt</button>
@@ -216,6 +248,10 @@
       <div class="actions" id="moduleActions" style="display:none">
         <button class="btn primary" id="moduleBtn" disabled>Read image &amp; rewrite module</button>
         <button class="btn" id="modulePromptBtn" disabled>Copy module prompt</button>
+      </div>
+      <div class="actions" id="pageActions" style="display:none">
+        <button class="btn primary" id="loadPageBtn" disabled>Read page</button>
+        <button class="btn" id="reloadSrcBtn">↻ Sources</button>
       </div>
       <div class="hint" id="briefHint">Sync the sheet to load templates, products &amp; evidence.</div>
       <div class="hint" id="moduleRuleHint" style="display:none;margin-top:4px"></div>
@@ -407,19 +443,105 @@ function fill(sel, items, fmt){
     const v = fmt?fmt(it):it; o.value=v.value; o.innerHTML=v.label; sel.appendChild(o); });
 }
 function populateUI(){
-  const tSel=document.getElementById("template");
-  fill(tSel, STATE.templates, t=>({value:t.name,label:t.name}));
-  updateComposition();
+  refreshTemplateSelect();
 
   const pSel=document.getElementById("product");
   fill(pSel, STATE.products, p=>({value:p,label:p}));
   updateProblems();
   updateEvidence();
 }
+
+// The Template dropdown means "the thing you're working on", so what it lists depends on
+// the mode: the sheet's page shapes when composing, and the live store's actual pages when
+// writing into one. Saved ones are pinned to the top of that second list — the whole point
+// of bookmarking is that those are the pages someone keeps coming back to.
+const srcKey = (kind, ref) => kind + "|" + ref;
+function refreshTemplateSelect(){
+  const sel=document.getElementById("template");
+  const keep=sel.value;
+  const restore=()=>{
+    if([...sel.options].some(o=>o.value===keep)) sel.value=keep;
+    updateComposition();
+  };
+
+  if(STATE.mode!=="page"){
+    fill(sel, STATE.templates, t=>({value:t.name,label:t.name}));
+    restore(); return;
+  }
+
+  sel.innerHTML="";
+  const src=STATE.sources, marks=STATE.bookmarks||[];
+  const opt=(value,label)=>{ const o=document.createElement("option"); o.value=value; o.textContent=label; return o; };
+  const templates=(src&&src.templates)||[], pages=(src&&src.pages)||[];
+  const live=new Set([
+    ...templates.map(t=>srcKey("theme_template",t.filename)),
+    ...pages.map(p=>srcKey("page",p.id))
+  ]);
+  const marked=new Set(marks.map(m=>srcKey(m.source.kind,m.source.ref)));
+
+  if(marks.length){
+    const g=document.createElement("optgroup"); g.label="★ Saved";
+    marks.forEach(m=>{
+      const k=srcKey(m.source.kind,m.source.ref);
+      // A saved source that has since left the theme still belongs in the list — its
+      // snapshot is exactly what a bookmark is for. Say so rather than offering a read
+      // that will 404.
+      const gone = src && !live.has(k);
+      g.appendChild(opt(k, `★ ${m.source.label||m.source.ref}${gone?"  (snapshot — no longer in the theme)":""}`));
+    });
+    sel.appendChild(g);
+  }
+  const rest=(label,items)=>{
+    const left=items.filter(i=>!marked.has(i.key));   // saved ones appear once, at the top
+    if(!left.length) return;
+    const g=document.createElement("optgroup"); g.label=label;
+    left.forEach(i=>g.appendChild(opt(i.key,i.label)));
+    sel.appendChild(g);
+  };
+  rest("Theme page templates", templates.map(t=>({
+    key:srcKey("theme_template",t.filename), label:t.filename.replace(/^templates\//,"") })));
+  rest("Online Store pages", pages.map(p=>({
+    key:srcKey("page",p.id), label:`${p.title||p.handle} · /${p.handle}` })));
+
+  if(!sel.options.length){
+    sel.appendChild(opt("", src?"(no page templates or pages found)":"(loading the live theme…)"));
+  }
+  restore();
+}
+
+// The source the Template dropdown currently names, or null in the other modes.
+function currentSource(){
+  const v=val("template"), i=v.indexOf("|");
+  if(i<0) return null;
+  const kind=v.slice(0,i), ref=v.slice(i+1);
+  const src=STATE.sources;
+  const mark=(STATE.bookmarks||[]).find(m=>m.source.kind===kind && m.source.ref===ref);
+  let label = kind==="page" ? ref : ref.replace(/^templates\//,"");
+  const page=((src&&src.pages)||[]).find(x=>x.id===ref);
+  if(page) label=page.title||page.handle;
+  if(mark&&mark.source.label) label=mark.source.label;
+  const inTheme = !src ? null : (kind==="page"
+    ? ((src.pages||[]).some(x=>x.id===ref))
+    : ((src.templates||[]).some(x=>x.filename===ref)));
+  return { kind, ref, label, inTheme, bookmarkId: mark?mark.id:null };
+}
+
 function updateComposition(){
+  const el=document.getElementById("composition");
+  if(STATE.mode==="page"){
+    const s=currentSource();
+    if(!s){ el.textContent="—"; return; }
+    const p=pageState();
+    const loaded = p.source && p.source.kind===s.kind && p.source.ref===s.ref;
+    const mark=(STATE.bookmarks||[]).find(m=>m.id===s.bookmarkId);
+    el.innerHTML=`<b>${esc(s.label)}</b> → ${s.kind==="page"?"Online Store page body":"theme page template"}`
+      + (loaded ? ` · ${p.counts.total} slots · ${p.counts.empty} empty`
+        : mark   ? ` · saved: ${mark.counts.total} slots · ${mark.counts.empty} empty · ${mark.draftCount||0} drafted`
+                 : ` · not read yet`);
+    return;
+  }
   const t=STATE.templates.find(x=>x.name===val("template"));
-  document.getElementById("composition").innerHTML =
-    t ? `<b>${esc(t.name)}</b> → ${esc(t.composition||"—")}` : "—";
+  el.innerHTML = t ? `<b>${esc(t.name)}</b> → ${esc(t.composition||"—")}` : "—";
 }
 function updateProblems(){
   const prod=val("product");
@@ -1154,6 +1276,553 @@ Return your review via the emit_review tool, populating every field.`;
   return {system, user};
 }
 
+/* ---------- Live-page mode: write copy into a real page's slots ---------- */
+// The outline comes from the published theme or an Online Store page and is READ-ONLY:
+// nothing in this app writes to Shopify. What a writer produces lives in the app's own
+// database, keyed by the slot's node id, and is shared like review drafts are.
+//
+// The parsers live server-side (lib/outline.js) so there is one implementation of the
+// copy-vs-config heuristics. The browser sends a selector and renders a tree.
+
+// Human labels for the kinds the parsers emit.
+const SLOT_KIND_LABEL = { H1:"h1", H2:"h2", H3:"h3", H4:"h4", P:"body", A:"cta",
+  LI:"bullet", QUOTE:"quote", IMAGE:"alt text", CONTENT:"copy" };
+
+function pageState(){
+  if(!STATE.page) STATE.page = { source:null, outline:[], counts:{total:0,empty:0}, drafts:{},
+    variants:{}, selected:{}, index:{}, bookmarkId:null, saveTimers:{}, lastRun:null, fromSnapshot:false };
+  return STATE.page;
+}
+const wordsIn = s => (String(s||"").trim().match(/\S+/g)||[]).length;
+function kindRule(kind){ return (STATE.kindRules||{})[kind]||null; }
+
+// Whether Shopify is reachable, plus the length rules. Called once on load so the panel
+// can say what's missing instead of only failing when someone hits "Read page".
+async function loadShopifyStatus(){
+  try{
+    const d=await api("/api/outline?op=status");
+    STATE.shopify=d; STATE.kindRules=d.rules||{};
+    return d;
+  }catch(e){ STATE.shopify={configured:false, error:e.message}; return STATE.shopify; }
+}
+
+// Both halves of the dropdown come from here: the live theme's sources and the saved list.
+// They load together so the pinned entries and the rest are never briefly out of step.
+async function loadSources(){
+  const hint=document.getElementById("srcHint");
+  hint.textContent="Reading the live theme…";
+  const marks=await fetchBookmarks().catch(()=>null);
+  if(marks) STATE.bookmarks=marks;
+  try{
+    const d=await api("/api/outline?op=sources");
+    STATE.sources=d;
+    const saved=(STATE.bookmarks||[]).length;
+    hint.innerHTML=`Live theme <b>${esc(d.theme.name)}</b> · ${d.templates.length} page template${d.templates.length===1?"":"s"} · ${d.pages.length} page${d.pages.length===1?"":"s"}`
+      + (saved?` · ${saved} saved (pinned to the top)`:"")
+      + (d.pagesError?`<br><span class="tag bad">pages unavailable</span> ${esc(d.pagesError)}`:"");
+  }catch(e){
+    STATE.sources=null;
+    // Saved templates still open from their snapshots with the store unreachable, so say
+    // that rather than implying nothing can be done.
+    hint.innerHTML=`<span class="tag bad">live theme not loaded</span> ${esc(e.message)}`
+      + ((STATE.bookmarks||[]).length?`<br>${STATE.bookmarks.length} saved template${STATE.bookmarks.length===1?"":"s"} can still be opened from their snapshots.`:"");
+  }
+  refreshTemplateSelect();
+  refreshButtons();
+}
+
+// `override` lets a caller name the source explicitly instead of trusting the pickers.
+// Re-reading a saved template must hit the template that was saved, and the pickers may
+// not have caught up to it yet (or at all, if the source has since been deleted).
+async function loadPage(override){
+  const o = (override && override.ref) ? override : currentSource();
+  if(!o || !o.ref){ toast("Pick a page template or page first"); return; }
+  // A saved source we can't confirm is live — removed from the theme (false), or the theme
+  // never loaded at all (null) — opens from its snapshot. That is what the bookmark is for,
+  // and it beats a 404 or a Shopify error. `pgFresh` passes no bookmarkId, so an explicit
+  // "re-read from the live store" always attempts the live read and reports what went wrong.
+  if(o.inTheme!==true && o.bookmarkId){
+    toast(o.inTheme===false ? "No longer in the theme — opening the saved snapshot"
+                            : "Live theme unavailable — opening the saved snapshot");
+    openBookmark(o.bookmarkId); return;
+  }
+  const kind=o.kind, ref=o.ref;
+  const p=pageState();
+  document.getElementById("outMeta").textContent="";
+  setOut(`<div class="empty"><span class="spinner"></span><p>Reading ${esc(ref)} from the live store…</p></div>`);
+  try{
+    const q = kind==="page" ? `op=page&id=${encodeURIComponent(ref)}`
+                            : `op=template&filename=${encodeURIComponent(ref)}`;
+    const d=await api("/api/outline?"+q);
+    p.source=d.source; p.outline=d.outline||[]; p.counts=d.counts||{total:0,empty:0};
+    p.variants={}; p.selected={}; p.lastRun=null; p.fromSnapshot=false; p.snapshotAt=null;
+    indexOutline();
+    // Drafts and the saved-state flag are the app's own data, so a failure to read them
+    // shouldn't hide the outline — degrade to "no drafts" and say so via the toast.
+    p.drafts = await api("/api/slot-drafts?sourceRef="+encodeURIComponent(p.source.ref))
+      .catch(e=>{ toast("Couldn't load saved drafts: "+e.message); return {}; });
+    const marks = await fetchBookmarks().catch(()=>null);
+    if(marks) STATE.bookmarks=marks;
+    const hit = (STATE.bookmarks||[]).find(m=>m.source.ref===p.source.ref && m.source.kind===p.source.kind);
+    p.bookmarkId = hit ? hit.id : null;
+    renderOutline();
+    updateComposition();   // the box under the dropdown now knows the real slot counts
+  }catch(e){
+    setOut(`<div class="gate fail">⚠︎ Couldn't read the page</div>
+      <div class="copyblock" style="border-color:var(--bad)">${esc(e.message)}</div>
+      <p class="hint">If this says Shopify isn't configured, set <code class="mini">SHOPIFY_STORE_DOMAIN</code> and
+      <code class="mini">SHOPIFY_ADMIN_TOKEN</code> in Vercel — the app needs a custom app with
+      <code class="mini">read_themes</code> and <code class="mini">read_content</code>. Nothing more: it never writes.</p>`);
+  }
+}
+
+// Flatten the tree once per load: every slot by id, with the headings above it and the
+// line before it. That trail is what the writer agent gets as context, so a subhead can
+// be written to follow its heading instead of in isolation.
+function indexOutline(){
+  const p=pageState();
+  p.index={};
+  const go=(nodes, trail)=>{
+    let prev="";
+    (nodes||[]).forEach(n=>{
+      p.index[n.id]={ node:n, trail:trail.slice(), prev };
+      const own=String(n.text||"").trim();
+      go(n.children, trail.concat([`${n.kind}: ${(own||n.label||"").slice(0,80)}`]));
+      if(n.editable && own) prev=own;
+    });
+  };
+  go(p.outline, []);
+}
+function slotById(id){ const e=pageState().index[id]; return e?e.node:null; }
+function allSlots(){
+  return Object.values(pageState().index).map(e=>e.node).filter(n=>n.editable && n.kind!=="GROUP");
+}
+function draftBox(id){
+  return [...document.querySelectorAll("[data-draft]")].find(el=>el.dataset.draft===id)||null;
+}
+function slotContext(id){
+  const e=pageState().index[id]; if(!e) return "";
+  const parts=[];
+  if(e.trail.length) parts.push("sits inside → "+e.trail.slice(-3).join(" → "));
+  if(e.prev) parts.push(`the line before it reads: "${e.prev.slice(0,140)}"`);
+  return parts.join(" · ");
+}
+
+/* ---------- rendering the outline ---------- */
+function renderOutline(){
+  const p=pageState();
+  if(!p.source){ setOut(`<div class="empty">Pick a source and hit <b>Read page</b>.</div>`); return; }
+  document.getElementById("outMeta").textContent="· "+p.source.label;
+  const drafted=Object.values(p.drafts).filter(d=>String(d.value||"").trim()).length;
+
+  let h=`<div class="actions" style="margin:0 0 12px">
+      <button class="btn ${p.bookmarkId?"":"primary"}" id="pgMark">${p.bookmarkId?"★ Saved":"☆ Save template"}</button>
+      <button class="btn" id="pgWriteEmpty">Write empty slots</button>
+      <button class="btn" id="pgWriteSel">Write selected</button>
+      <button class="btn ghost" id="pgSelAll">Select all</button>
+      <button class="btn ghost" id="pgSelNone">Clear</button>
+      <button class="btn ghost" id="pgMd">Export MD</button>
+      <button class="btn ghost" id="pgJson">Export JSON</button>
+    </div>`;
+  h+=`<div class="hint" style="margin:0"><b>${esc(p.source.label)}</b>${
+      p.source.themeName?` · live theme ${esc(p.source.themeName)}`:""} · ${p.counts.total} slots · ${
+      p.counts.empty} empty · ${drafted} drafted · <b>read-only</b></div>`;
+  if(p.fromSnapshot){
+    h+=`<div class="hint" style="margin-top:6px"><span class="tag warn">snapshot</span> Saved ${
+      p.snapshotAt?esc(new Date(p.snapshotAt).toLocaleString()):""} — this is the outline as it was
+      when bookmarked. <button class="btn ghost" id="pgFresh" style="padding:3px 8px">Re-read from the live store</button></div>`;
+  }
+  if(p.lastRun) h+=runSummary(p.lastRun);
+  h+=`<div style="margin-top:10px">`+p.outline.map(n=>nodeHtml(n,0)).join("")+`</div>`;
+  setOut(h);
+  wireOutline();
+}
+function runSummary(lr){
+  let h="";
+  if(lr.gate) h+=`<div class="gate ${lr.gate.pass?"pass":"fail"}" style="margin-top:12px">${
+    lr.gate.pass?"✓ Compliance gate PASSED":"✗ Compliance gate BLOCKED"}${
+    lr.gate.blockers&&lr.gate.blockers.length?` — ${esc(lr.gate.blockers.join("; "))}`:""}</div>`;
+  if(lr.promise) h+=`<div class="kv"><b>Page promise it wrote to</b>${esc(lr.promise)}</div>`;
+  if(lr.critique&&lr.critique.length){
+    h+=`<details style="margin-top:8px"><summary>Self-critique of its own first pass (${lr.critique.length})</summary>`;
+    h+=`<div style="overflow-x:auto"><table><tr><th>Line</th><th>Rule</th><th>Problem</th><th>Fix applied</th></tr>`;
+    lr.critique.forEach(c=>h+=`<tr><td>${esc(c.line||"—")}</td><td>${esc(c.rule_id||"")}</td><td>${esc(c.problem||"")}</td><td>${esc(c.fix||"")}</td></tr>`);
+    h+=`</table></div></details>`;
+  }
+  if(lr.warnings&&lr.warnings.length)
+    h+=`<div class="hint" style="margin-top:8px"><span class="tag warn">${lr.warnings.length} flag${lr.warnings.length>1?"s":""}</span> ${esc(lr.warnings.join(" · "))}</div>`;
+  if(lr.notes) h+=`<div class="hint" style="margin-top:6px">${esc(lr.notes)}</div>`;
+  return h;
+}
+function nodeHtml(n, depth){
+  const pad = depth ? ` style="padding-left:${Math.min(depth,4)*12}px"` : "";
+  const kids = (n.children||[]).map(c=>nodeHtml(c, depth+1)).join("");
+  if(n.editable && n.kind!=="GROUP") return `<div${pad}>${slotRow(n)}${kids}</div>`;
+  const label = n.kind==="SECTION" ? `▸ ${n.label||n.id}` : (n.label||n.id);
+  return `<div${pad}><div class="ohead${n.kind==="SECTION"?"":" blk"}">${esc(label)}</div>${kids}</div>`;
+}
+function slotRow(n){
+  const p=pageState();
+  const draft=p.drafts[n.id]||null;
+  const store=String(n.text||"");
+  const isEmpty=!store.trim();
+  const sel=!!p.selected[n.id];
+  // sourceAtEdit is the store copy as it stood when this draft was written. If the live
+  // page has moved on since, say so rather than quietly showing a stale comparison.
+  const changed = draft && draft.sourceAtEdit!=null && draft.sourceAtEdit!==store;
+  const shown = draft&&String(draft.value||"").trim() ? draft.value : store;
+  const w=wordsIn(shown), r=kindRule(n.kind);
+  const lenBad = w>0 && r && (w<r.min || w>r.max);
+
+  let h=`<div class="slot${isEmpty?" empty":""}${sel?" sel":""}">
+    <div class="slot-top">
+      <input type="checkbox" class="slot-cb" data-cb="${esc(n.id)}"${sel?" checked":""} title="select this slot for writing">
+      <span class="tag acc">${esc(SLOT_KIND_LABEL[n.kind]||n.kind)}</span>
+      <span class="grow hint">${esc(n.label||"")}</span>
+      ${isEmpty?`<span class="tag warn">empty</span>`:""}
+      ${changed?`<span class="tag bad">store changed</span>`:""}
+      ${draft?`<span class="tag ${draft.status==="edited"?"good":""}">${draft.status==="edited"?"edited":"ai"}</span>`:""}
+      <span class="tag${lenBad?" warn":""}" title="${r?esc(`${r.min}–${r.max} words · ${r.note}`):"no rule"}">${w}w</span>
+    </div>
+    <div class="slot-store${isEmpty?" none":""}">${isEmpty?"(nothing on the page yet)":esc(store)}</div>
+    <textarea class="slot-draft" data-draft="${esc(n.id)}" placeholder="draft this slot…">${esc(draft?draft.value:"")}</textarea>`;
+  h+=variantsHtml(n.id);
+  h+=`</div>`;
+  return h;
+}
+function variantsHtml(id){
+  const vs=pageState().variants[id];
+  if(!vs||!vs.length) return "";
+  let h=`<div class="variants">`;
+  vs.forEach((v,i)=>{
+    const cc=v.copy_checks||[];
+    const zeros=cc.filter(c=>c.score===0).length;
+    h+=`<div class="variant" data-pick="${esc(id)}" data-i="${i}" title="click to take this option">
+      <div>${esc(v.text||"")}</div>
+      <div class="vmeta">
+        <span class="tag">option ${i+1}</span>
+        ${v.length&&!v.length.ok?`<span class="tag warn">${esc(v.length.why||"length")}</span>`
+                               :`<span class="tag">${v.length?v.length.words:wordsIn(v.text)}w</span>`}
+        ${v.grounded===false?`<span class="tag bad">ungrounded</span>`
+                            :(v.fact_sheet_id?`<code class="mini">${esc(v.fact_sheet_id)}</code>`:"")}
+        ${zeros?`<span class="tag bad">${zeros} rule${zeros>1?"s":""} at 0</span>`
+               :(cc.length?`<span class="tag good">checks ${esc(cc.map(c=>c.score).join("/"))}</span>`:"")}
+        ${(v.verify||[]).length?`<span class="tag warn">verify: ${esc(v.verify.join("; "))}</span>`:""}
+        ${v.note?`<span>${esc(v.note)}</span>`:""}
+      </div></div>`;
+  });
+  return h+`</div>`;
+}
+function wireOutline(){
+  const p=pageState();
+  const on=(id,fn)=>{ const el=document.getElementById(id); if(el) el.onclick=fn; };
+  on("pgMark", toggleBookmark);
+  on("pgFresh", ()=>loadPage({ kind:p.source.kind, ref:p.source.ref }));
+  on("pgWriteEmpty", ()=>{
+    const ids=allSlots().filter(s=>!String(s.text||"").trim()).map(s=>s.id);
+    if(!ids.length){ toast("No empty slots on this page"); return; }
+    writeSlots(ids);
+  });
+  on("pgWriteSel", ()=>{
+    const ids=Object.keys(p.selected).filter(k=>p.selected[k]);
+    if(!ids.length){ toast("Tick the slots you want written"); return; }
+    writeSlots(ids);
+  });
+  on("pgSelAll", ()=>{ allSlots().forEach(s=>{p.selected[s.id]=true;}); renderOutline(); });
+  on("pgSelNone", ()=>{ p.selected={}; renderOutline(); });
+  on("pgMd", ()=>exportSlots("md"));
+  on("pgJson", ()=>exportSlots("json"));
+  document.querySelectorAll("[data-cb]").forEach(cb=>cb.onchange=()=>{
+    p.selected[cb.dataset.cb]=cb.checked;
+    const box=cb.closest(".slot"); if(box) box.classList.toggle("sel", cb.checked);
+  });
+  document.querySelectorAll("[data-draft]").forEach(ta=>ta.oninput=()=>{
+    ta.classList.add("dirty");
+    queueSlotSave(ta.dataset.draft, ta.value, "edited");
+  });
+  document.querySelectorAll("[data-pick]").forEach(el=>el.onclick=()=>{
+    const id=el.dataset.pick, v=(p.variants[id]||[])[+el.dataset.i];
+    if(!v) return;
+    const ta=draftBox(id); if(ta){ ta.value=v.text||""; ta.classList.add("dirty"); }
+    queueSlotSave(id, v.text||"", "ai", true);
+    toast("Option "+(+el.dataset.i+1)+" taken");
+  });
+}
+
+/* ---------- saving slot drafts (shared, autosaved) ---------- */
+function queueSlotSave(id, value, status, now){
+  const p=pageState();
+  if(!p.source) return;
+  const node=slotById(id);
+  const prev=p.drafts[id]||{};
+  // Keep the FIRST snapshot: it records the store copy the writer was looking at, which
+  // is the whole point of the flag. Overwriting it on every keystroke would erase it.
+  const sourceAtEdit = prev.sourceAtEdit!=null ? prev.sourceAtEdit : (node ? String(node.text||"") : "");
+  p.drafts[id]={ value, status, sourceAtEdit, updatedBy:reviewerName(), updatedAt:new Date().toISOString() };
+  clearTimeout(p.saveTimers[id]);
+  const go=()=>api("/api/slot-drafts",{method:"PUT",body:JSON.stringify({
+      sourceRef:p.source.ref, nodeId:id, value, status, sourceAtEdit, updatedBy:reviewerName() })})
+    .then(res=>{
+      if(res&&res.cleared) delete p.drafts[id];   // an emptied box means "no draft here"
+      const ta=draftBox(id); if(ta) ta.classList.remove("dirty");
+    })
+    .catch(e=>toast("Save failed: "+e.message));
+  if(now) go(); else p.saveTimers[id]=setTimeout(go, 700);
+}
+
+/* ---------- the slot writer's prompt ---------- */
+// Merged into the existing quality system rather than run standalone: per-kind length
+// rules and [VERIFY:] gaps come from the slot spec, the evidence grounding and the
+// per-line Copy_Checks scoring come from the sheet. Slot copy is held to the same bar as
+// everything else the app produces.
+function lengthTable(kinds){
+  return [...new Set(kinds)].map(k=>{
+    const r=kindRule(k);
+    return `  ${k} — ${r?`${r.min}–${r.max} words · ${r.note}`:"no rule; match the length of what's there"}`;
+  }).join("\n");
+}
+function buildSlotsPrompt(slots, nVariants){
+  const b=buildBrief();
+  const ev=evidenceFor(b.product,b.problems);
+  const f=STATE.fact[b.product];
+  const p=pageState();
+  const evTxt=(label,arr)=>arr.length?`\n${label}:\n`+arr.map(x=>`  - [${x.problem||"general"}] ${x.text}${x.source?`  (source: ${x.source})`:""}`).join("\n"):"";
+  const mand=STATE.copyMandatory.map(r=>r["Rule ID"]).join(", ")||"1, 2, 3";
+  const opt =STATE.copyOptional.map(r=>r["Rule ID"]).join(", ")||"4, 5, 6";
+
+  const system =
+`You are the copy engine for First Day, a Bio-Matched children's multivitamin brand. In this mode you are writing copy into the INDIVIDUAL SLOTS of a landing page that already exists — not composing a page from scratch. You NEVER invent facts, studies, dosages, or ingredient claims — if Product Info doesn't support a claim, you cut the claim. When a rule and the brief conflict, you flag it rather than silently choosing.
+
+HOW THIS MODE DIFFERS:
+- You write ONLY the slots listed. Do not add slots, merge them, or return copy for anything else.
+- Each slot has a KIND, and the kind sets the length. These are hard limits, not suggestions — a headline slot must not come back as a paragraph:
+${lengthTable(slots.map(s=>s.kind))}
+- Every slot must serve ONE page promise. State that promise first, then write to it.
+- Each slot gets ${nVariants} option${nVariants>1?"s":""}. Option 1 stays closest to what is on the page today, in meaning AND in length. Each later option is a bigger swing. Options must be genuinely different approaches, not synonyms of each other.
+- A slot whose current copy is empty is an unwritten slot: write it from the brief, the evidence and the surrounding lines, and say in the note what you inferred it was for.
+- Copy must fit where it sits. Each slot comes with the headings above it and the line before it — a subhead has to follow its heading, and a CTA has to follow the block it closes.
+- Any fact you need and do not have goes INLINE in the line itself as [VERIFY: what you need]. Never guess a number, never silently drop the point. Also list it in that variant's verify array.
+- No disease claims: nothing that treats, prevents, cures or diagnoses any condition, including ADHD, autism, anxiety and immunity-as-protection.
+- Return the copy text ONLY in each variant's text field — no labels, no surrounding quotes, no markdown.
+
+WORKFLOW (run every step, in this order):
+1. Read the outline context and the brief. Name the ONE promise this page makes.
+2. Write a first pass — one line per slot. This is the draft you are going to criticise.
+3. Criticise that draft against the rules below, specifically and unsparingly. A critique that finds nothing is a critique you did not do.
+4. Write the FINAL variants with every fix applied. These are what ship and what every check scores.
+5. Score each final variant against the Copy_Checks. Any falsifiable claim scoring 2 MUST map to a Product Info / evidence row, or the compliance gate blocks it regardless of score.
+6. Run the competitor swap test against: ${COMPETITORS.join(", ")}. If a line would work just as well for them, it is not doing its job — rewrite it around a First-Day-only asset.
+
+COPY_CHECKS — score every variant 0/1/2 on each:
+${ruleLines(STATE.copyChecks)}
+
+COPY_CHECKS PASS LOGIC (per the README): every line must satisfy ALL of rules ${mand}, AND at least ONE of rules ${opt}. A line failing that logic fails.
+
+MODULE congruency rules that still apply to slot-level copy (a slot must not break the module it sits in):
+${ruleLines(STATE.moduleAll||[])}
+
+PASS CRITERIA: every returned variant satisfies the Copy_Checks logic with no rule at 0; every falsifiable claim traceable to Product Info or approved evidence; every unsupported fact marked [VERIFY:]; nothing a competitor could equally say.`;
+
+  const slotList = slots.map((s,i)=>{
+    const r=kindRule(s.kind);
+    return `  [${i+1}] id: ${s.id}
+      kind: ${s.kind}${r?`  (${r.min}–${r.max} words — ${r.note})`:""}
+      origin: ${s.label||"—"}
+      currently: ${String(s.current||"").trim()?JSON.stringify(s.current):"(EMPTY — this slot has never been written)"}
+      ${s.context?`context: ${s.context}`:"context: (top level)"}`;
+  }).join("\n");
+
+  const user =
+`THE PAGE
+  Source: ${p.source?p.source.label:"(unknown)"} — ${p.source&&p.source.kind==="page"?"an Online Store page body":"a theme page template"}${p.source&&p.source.themeName?` on the live theme "${p.source.themeName}"`:""}
+  Slots on the page: ${p.counts.total} (${p.counts.empty} of them empty)
+  Shape it already has, in order: ${p.outline.map(n=>n.label||n.id).join(" → ")||"(flat — no sections)"}
+
+BRIEF
+  Product: ${b.product}
+  Problems / angles: ${b.problems.length?b.problems.join("; ")+(b.problems.length>1?"  (address every one across the slots; lead with the first)":""):"(none specified)"}
+  Channel: ${b.channel}
+  Working title: ${b.title||"(none — derive the promise from the page and the evidence)"}
+  Big promise: ${b.promise||"(BLANK — infer ONE, declare it in page_promise, write every slot to it)"}
+
+PRODUCT INFO (the ONLY source for dosages/ingredients — cite by SKU/Product ID):
+${f?`  Product: ${b.product}\n  SKU: ${f.sku} · Product ID: ${f.productId} · Variant ID: ${f.variantId}\n  Nutrients:\n${(f.nutrients||"(none listed)").split("\n").map(l=>"    "+l).join("\n")}`:"  (no product info row found for this product — do not fabricate dosages)"}
+
+APPROVED EVIDENCE (reuse verbatim or tighten; do not exceed what's here):${evTxt("Hooks (problem-based openers)",ev.hooks)}${evTxt("Claims (how the product solves the problem)",ev.claims)}${evTxt("Quotes (customer / pediatrician)",ev.quotes)}
+
+CREDIBILITY ANCHORS you may cite: Advisory board (Dr. Lei Chen, Yale; Dr. Ed Giovannucci, Harvard); third-party testing; Clean Label Project certification; the 35,000-study review; 45-day guarantee.
+DIFFERENTIATION assets: No Junk(TM), Real Wholesome(R), Bio-Matched mechanism, methylfolate / Cognizin(R) / Suntheanine(R) / Livaux(R) / SNZ 1969(R), segment-specific dosing, the 3-in-1 system.
+
+SLOTS TO WRITE (${slots.length}) — return one entry per id, the same ids, in this order:
+${slotList}
+
+Return one JSON object with these keys, in this order, populating every one:
+page_promise, draft [{id,text}] (your first pass, one line per slot), self_critique [{line,rule_id,problem,fix}] (what is wrong with that draft — be specific and unsparing), slots [{id,kind,variants:[{text,word_count,grounded,fact_sheet_id,verify[],copy_checks:[{id,score,justification}],note}]}] (the FINAL variants, every fix applied), compliance_gate {pass,blockers[]}, notes.`;
+
+  return {system, user};
+}
+
+async function writeSlots(ids){
+  const p=pageState();
+  if(!STATE.synced){ toast("Sync the sheet first — the rules and evidence come from it"); return; }
+  const MAX=40;
+  if(ids.length>MAX){ toast(`${ids.length} slots is too many for one pass — writing the first ${MAX}`); ids=ids.slice(0,MAX); }
+  const slots=ids.map(id=>{
+    const n=slotById(id); if(!n) return null;
+    return { id:n.id, kind:n.kind, label:n.label||"", current:String(n.text||""), context:slotContext(id) };
+  }).filter(Boolean);
+  if(!slots.length){ toast("Nothing to write"); return; }
+
+  const nV=parseInt(val("variantCount"),10)||3;
+  const model=val("model");
+  const {system,user}=buildSlotsPrompt(slots,nV);
+  setOut(`<div class="empty"><span class="spinner"></span><p>Writing ${slots.length} slot${slots.length>1?"s":""} × ${nV} option${nV>1?"s":""} with ${esc(model)}…</p>
+    <p class="hint">Draft → self-critique → final, then scored against Copy_Checks.</p></div>`);
+  try{
+    const r=await api("/api/slots",{method:"POST",body:JSON.stringify({system,user,model,slots,variants:nV})});
+    (r.slots||[]).forEach(s=>{ p.variants[s.id]=s.variants||[]; });
+    p.lastRun={ promise:r.page_promise||"", critique:r.self_critique||[],
+                gate:r.compliance_gate||null, warnings:r.warnings||[], notes:r.notes||"", model };
+    renderOutline();
+    toast(`${(r.slots||[]).length} slot${(r.slots||[]).length===1?"":"s"} written — click an option to take it`);
+  }catch(e){
+    renderOutline();
+    setOut(document.getElementById("outBody").innerHTML
+      + `<div class="gate fail" style="margin-top:12px">⚠︎ Writing failed</div>
+         <div class="copyblock" style="border-color:var(--bad)">${esc(e.message)}</div>`);
+    wireOutline();
+  }
+}
+
+/* ---------- export (rendered server-side so there is one definition of an export) ---------- */
+async function exportSlots(fmt){
+  const p=pageState();
+  if(!p.source) return;
+  try{
+    const res=await fetch("/api/outline?op=export",{method:"POST",headers:apiHeaders(),
+      body:JSON.stringify({ outline:p.outline, drafts:p.drafts, format:fmt, meta:{
+        label:p.source.label, sourceKind:p.source.kind, sourceRef:p.source.ref,
+        themeName:p.source.themeName||"", exportedBy:reviewerName() } })});
+    if(!res.ok){ let d={}; try{ d=await res.json(); }catch(e){} throw new Error(d.error||("HTTP "+res.status)); }
+    const base=("LP-slots-"+(p.source.label||"page")).replace(/[^\w.-]+/g,"-").slice(0,60);
+    if(fmt==="json") download(base+".json", JSON.stringify(await res.json(),null,2), "application/json");
+    else download(base+".md", await res.text(), "text/markdown;charset=utf-8");
+    toast(fmt.toUpperCase()+" exported");
+  }catch(e){ toast("Export failed: "+e.message); }
+}
+
+/* ---------- saved templates (bookmarks) ---------- */
+function fetchBookmarks(){ return api("/api/bookmarks"); }
+// Cached because the Template dropdown re-reads it on every mode switch and every save.
+async function refreshBookmarkCache(){
+  try{ STATE.bookmarks=await fetchBookmarks(); }catch(e){ /* keep whatever we had */ }
+  return STATE.bookmarks||[];
+}
+async function updateBookmarkCount(){
+  const el=document.getElementById("markCount"); if(!el) return;
+  try{ el.textContent=(await refreshBookmarkCache()).length; }catch(e){ el.textContent="!"; }
+}
+async function toggleBookmark(){
+  const p=pageState();
+  if(!p.source) return;
+  if(p.bookmarkId){
+    // Unbookmarking removes the shortcut, not the writing — say so, so nobody avoids the
+    // button thinking it will bin their copy.
+    if(!confirm("Remove this from Saved?\n\nThe copy drafted into its slots is kept — re-save the template and it comes back.")) return;
+    try{
+      await api("/api/bookmarks/"+encodeURIComponent(p.bookmarkId),{method:"DELETE"});
+      p.bookmarkId=null; toast("Removed from Saved");
+      await afterBookmarkChange();
+    }catch(e){ toast("Failed: "+e.message); }
+    return;
+  }
+  try{
+    const b=await api("/api/bookmarks",{method:"POST",body:JSON.stringify({
+      source:p.source, outline:p.outline, createdBy:reviewerName() })});
+    p.bookmarkId=b.id; toast("Saved — pinned to the top of the Template list");
+    await afterBookmarkChange();
+  }catch(e){ toast("Save failed: "+e.message); }
+}
+// Saving or removing changes what's pinned, so the dropdown has to be rebuilt — and
+// rebuilding it must not lose the selection, which is why refreshTemplateSelect restores it.
+// `rerender` is opt-out because this also fires from the ⭐ Saved list, where redrawing the
+// outline would replace the list the user is looking at with an empty-state message.
+async function afterBookmarkChange(rerender){
+  await refreshBookmarkCache();
+  refreshTemplateSelect();
+  if(rerender!==false){ renderOutline(); updateComposition(); }
+  const el=document.getElementById("markCount");
+  if(el) el.textContent=(STATE.bookmarks||[]).length;
+}
+async function renderBookmarksList(){
+  document.getElementById("outMeta").textContent="· saved templates";
+  setOut(`<div class="empty"><span class="spinner"></span><p>Loading saved templates…</p></div>`);
+  let list;
+  try{ list=await fetchBookmarks(); }
+  catch(e){ setOut(`<div class="gate fail">⚠︎ Couldn't load saved templates</div><div class="copyblock" style="border-color:var(--bad)">${esc(e.message)}</div>`); return; }
+  let h=`<div class="section-title">Saved templates <span class="pill">${list.length}</span></div>`;
+  if(!list.length){
+    setOut(h+`<div class="empty">Nothing saved yet.<br>Open a page in <b>📄 Live page</b> mode and hit <b>☆ Save template</b>.</div>`);
+    return;
+  }
+  h+=`<div class="drafts">`;
+  list.forEach(b=>{
+    h+=`<div class="draft-card">
+      <div class="draft-main">
+        <b>${esc(b.source.label||b.source.ref)}</b>
+        <span class="tag">${b.source.kind==="page"?"page":"theme template"}</span>
+        <div class="hint">${esc(b.source.ref)}${b.source.themeName?" · theme "+esc(b.source.themeName):""}</div>
+        <div class="hint">${b.counts.total} slots · ${b.counts.empty} empty · ${b.draftCount||0} drafted · saved ${
+          esc(new Date(b.updatedAt).toLocaleString())}${b.createdBy?" by "+esc(b.createdBy):""}</div>
+        ${b.note?`<div class="hint">${esc(b.note)}</div>`:""}
+      </div>
+      <div class="draft-act">
+        <button class="btn" data-bopen="${esc(b.id)}">Open</button>
+        <button class="btn ghost" data-bdel="${esc(b.id)}">Remove</button>
+      </div></div>`;
+  });
+  setOut(h+`</div><div class="hint" style="margin-top:12px">Opening a saved template reads the stored snapshot, so it's instant and works even if the store is unreachable. <b>Re-read from the live store</b> refreshes it and flags any slot whose copy has changed underneath a draft.</div>`);
+  document.querySelectorAll("[data-bopen]").forEach(btn=>btn.onclick=()=>openBookmark(btn.dataset.bopen));
+  document.querySelectorAll("[data-bdel]").forEach(btn=>btn.onclick=async()=>{
+    if(!confirm("Remove this from Saved?\n\nThe copy drafted into its slots is kept.")) return;
+    try{
+      const gone=btn.dataset.bdel;
+      await api("/api/bookmarks/"+encodeURIComponent(gone),{method:"DELETE"});
+      // If the page on screen was the one just unsaved, its ★ button is now wrong.
+      const p=pageState();
+      if(p.bookmarkId===gone) p.bookmarkId=null;
+      toast("Removed");
+      await afterBookmarkChange(false);   // unpins it in the dropdown, keeps this list up
+      renderBookmarksList();
+    }catch(e){ toast("Failed: "+e.message); }
+  });
+}
+async function openBookmark(id){
+  document.getElementById("outMeta").textContent="· saved template";
+  setOut(`<div class="empty"><span class="spinner"></span><p>Loading saved template…</p></div>`);
+  try{
+    const b=await api("/api/bookmarks/"+encodeURIComponent(id));
+    const p=pageState();
+    p.source=b.source; p.outline=b.outline||[]; p.drafts=b.drafts||{};
+    p.counts=b.counts||{total:0,empty:0};
+    p.variants={}; p.selected={}; p.lastRun=null;
+    p.bookmarkId=b.id; p.fromSnapshot=true; p.snapshotAt=b.updatedAt;
+    indexOutline();
+    setMode("page");
+    // Point the dropdown at it, so the panel agrees with what's on screen and "Re-read from
+    // the live store" hits this source rather than whatever was selected before.
+    await refreshBookmarkCache();
+    refreshTemplateSelect();
+    const sel=document.getElementById("template");
+    const key=srcKey(b.source.kind, b.source.ref);
+    if([...sel.options].some(o=>o.value===key)) sel.value=key;
+    renderOutline();
+    updateComposition();
+  }catch(e){
+    setOut(`<div class="gate fail">⚠︎ Couldn't open it</div><div class="copyblock" style="border-color:var(--bad)">${esc(e.message)}</div>`);
+  }
+}
+
 /* ---------- API client (server holds the key; Postgres holds the shared drafts) ---------- */
 function reviewerName(){ return (localStorage.getItem("fd_reviewer")||"").trim(); }
 function apiHeaders(){
@@ -1326,20 +1995,37 @@ function refreshButtons(){
   const writeReady  = STATE.synced && val("title").trim();
   const auditReady  = STATE.synced && val("existingCopy").trim();
   const moduleReady = STATE.synced && val("moduleName").trim() && STATE.moduleImages.length>0;
+  // Reading a page needs Shopify, not the sheet. Writing into its slots needs both, and
+  // writeSlots() says so rather than the Read button pretending to be the blocker.
+  const pageReady  = !!currentSource();
+  document.getElementById("loadPageBtn").disabled=!pageReady;
   document.getElementById("genBtn").disabled=!writeReady;
   document.getElementById("promptBtn").disabled=!writeReady;
   document.getElementById("auditBtn").disabled=!auditReady;
   document.getElementById("auditPromptBtn").disabled=!auditReady;
   document.getElementById("moduleBtn").disabled=!moduleReady;
   document.getElementById("modulePromptBtn").disabled=!moduleReady;
-  const hint = !STATE.synced
-    ? "Sync the sheet to load templates, products & evidence."
-    : mode==="audit"
-      ? (auditReady?"Ready. Grade & improve, or copy the prompt.":"Paste the existing page copy to enable grading.")
-      : mode==="module"
-        ? (moduleReady?"Ready. The image gets read, graded on the module rules, rewritten, then re-checked."
-                      :"Name the module and add a screenshot of its first version.")
-        : (writeReady?"Ready. Generate live, or copy the prompt.":"Add a working title to enable generation.");
+  const pageHint = () => {
+    const saved=(STATE.bookmarks||[]).length;
+    if(STATE.shopify && STATE.shopify.configured===false)
+      return "Shopify isn't configured on the server — set SHOPIFY_STORE_DOMAIN and SHOPIFY_ADMIN_TOKEN (scopes: read_themes, read_content).";
+    if(!STATE.sources) return saved
+      ? `Live theme unavailable — ${saved} saved template${saved===1?"":"s"} can still be opened from their snapshots.`
+      : "Loading the live theme's page templates…";
+    if(!pageReady) return "Pick a page template or an Online Store page in Template above.";
+    if(!STATE.synced) return "Ready to read. Sync the sheet before writing — the rules and evidence come from it.";
+    return "Ready. Read the page, then write its empty or selected slots.";
+  };
+  const hint = mode==="page"
+    ? pageHint()
+    : !STATE.synced
+      ? "Sync the sheet to load templates, products & evidence."
+      : mode==="audit"
+        ? (auditReady?"Ready. Grade & improve, or copy the prompt.":"Paste the existing page copy to enable grading.")
+        : mode==="module"
+          ? (moduleReady?"Ready. The image gets read, graded on the module rules, rewritten, then re-checked."
+                        :"Name the module and add a screenshot of its first version.")
+          : (writeReady?"Ready. Generate live, or copy the prompt.":"Add a working title to enable generation.");
   document.getElementById("briefHint").textContent = hint;
   updateModuleRuleHint();
 }
@@ -1353,17 +2039,31 @@ function setMode(mode){
   show("auditActions", mode==="audit","flex");
   show("moduleFields", mode==="module");
   show("moduleActions",mode==="module","flex");
+  show("pageFields",   mode==="page");
+  show("pageActions",  mode==="page","flex");
   document.getElementById("tmplHint").textContent =
     mode==="audit" ? "· the page shape to rewrite into"
     : mode==="module" ? "· the page this module belongs to"
+    : mode==="page" ? "· a real page from the live store · ★ saved first"
     : "· the page you want to write";
+  // Switching in or out of page mode swaps what the dropdown lists entirely.
+  refreshTemplateSelect();
+  // The theme's page templates are fetched on first entry to the mode, not on load —
+  // most sessions never open it, and it's two Shopify round trips.
+  if(mode==="page" && !STATE.sources && !STATE.sourcesLoading){
+    STATE.sourcesLoading=true;
+    loadSources().finally(()=>{ STATE.sourcesLoading=false; });
+  }
   refreshButtons();
 }
 
 /* ---------- wire up ---------- */
 document.getElementById("syncBtn").onclick=syncSheet;
 document.getElementById("draftsBtn").onclick=renderDraftsList;
-document.getElementById("template").onchange=updateComposition;
+document.getElementById("marksBtn").onclick=renderBookmarksList;
+document.getElementById("loadPageBtn").onclick=()=>loadPage();
+document.getElementById("reloadSrcBtn").onclick=loadSources;
+document.getElementById("template").onchange=()=>{ updateComposition(); refreshButtons(); };
 document.getElementById("product").onchange=()=>{updateProblems();updateEvidence();};
 document.getElementById("title").oninput=refreshButtons;
 document.getElementById("existingCopy").oninput=refreshButtons;
@@ -1403,6 +2103,8 @@ document.getElementById("saveKey").onclick=()=>{
   if(t){ localStorage.setItem("fd_app_token",t); toast("Access token saved to this browser"); }
   else { localStorage.removeItem("fd_app_token"); toast("Access token cleared"); }
   updateDraftCount();
+  updateBookmarkCount();
+  loadShopifyStatus().then(refreshButtons);
 };
 document.getElementById("reviewer").oninput=()=>{
   const n=val("reviewer").trim();
@@ -1413,6 +2115,8 @@ document.getElementById("reviewer").oninput=()=>{
   const n=localStorage.getItem("fd_reviewer"); if(n) document.getElementById("reviewer").value=n;
   setMode("write");
   updateDraftCount();
+  updateBookmarkCount();
+  loadShopifyStatus();
   syncSheet();
 })();
 </script>

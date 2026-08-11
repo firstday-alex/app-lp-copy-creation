@@ -10,7 +10,7 @@ It's a **Vercel app**: a static frontend (`index.html`) + serverless functions i
 2. **Build a brief** — pick a **template** (from the Templates tab), a **product/segment**, a **problem/angle** (★ = primary, from the Problems tab), a **channel**, a working title, and an optional big promise (left blank, the AI infers and declares one).
 3. **Assembles the prompt** exactly per the sheet's README workflow — bakes in the LP content requirements (R1–R7), the Copy Checks scoring rubric (R1–R6), the competitor swap test, and the credibility/differentiation assets. Only **ACTIVE** rules are included.
 4. **Grounds it in evidence** — injects that product's fact-sheet nutrients (the only allowed source for dosages) plus the approved claims, statistics, and reviews matching the selected product + problem. Shown live in the *Evidence library* panel.
-5. **Three modes** — *✍️ Write new* (a whole page from a brief), *🔍 Grade page* (score a live page and rewrite it), and *🧩 One module* (below).
+5. **Four modes** — *✍️ Write new* (a whole page from a brief), *🔍 Grade page* (score a live page and rewrite it), *🧩 One module*, and *📄 Live page* (write copy into a real Shopify page's slots) — the last two are below.
 6. **Generates + scores** — two paths:
    - **Generate copy** — posts the assembled prompt to `/api/generate`, which calls Anthropic with the **server-side key** and renders the result inline: final copy, LP-requirement checklist, per-line Copy Check scores (0/1/2), claim→fact-sheet mapping, competitor-swap results, and a **PASS/FAIL compliance gate**.
    - **Copy full prompt** — copies the complete system + task prompt to paste into Claude manually. Works offline, no key needed.
@@ -34,6 +34,37 @@ Same loop as the LP, scoped to a **single module** and driven by an **image of t
 Only `Module_Checks` gets this treatment — `LP_Checks` and `Copy_Checks` are fully `ACTIVE` in the sheet and still follow the ACTIVE-only rule. The Brief panel states the divergence in every mode; setting `Status` to `ACTIVE` on those four rows makes the sheet agree with what the app already enforces.
 
 Most module rules are written as a bare question with no `Score 0/1/2 =` anchors (only rule 1 has them). The prompts say which rules have anchors so those get applied literally, and instruct the model to score the unanchored ones 2 / 1 / 0 on whether the module clearly, partly, or doesn't satisfy the question — and to state what it judged that on. Filling in the anchor columns in the sheet will tighten those scores.
+
+## Live page (📄 mode)
+
+Instead of writing a page from a brief, this reads a page that already exists, breaks it into the individual copy slots it's made of, and writes into them one at a time. **Read-only against Shopify** — it never writes back.
+
+1. **Pick a page in the Template dropdown.** In this mode that dropdown lists the live store instead of the sheet — **★ Saved** first, then **Theme page templates** (`templates/page.*.json` from the published theme), then **Online Store pages**. Needs `SHOPIFY_STORE_DOMAIN` + `SHOPIFY_ADMIN_TOKEN` on the server; see [`DEPLOY.md`](DEPLOY.md).
+2. **Read the page.** It comes back as an outline of copy slots — headings, body, bullets, CTAs, quotes, image alt text — nested so a heading owns what follows it. Slots that exist but have never been written are marked **empty**; that state is the point of the mode, so blank copy is kept, never pruned.
+3. **Write slots.** *Write empty slots* fills every unwritten one; *Write selected* takes whatever you tick (40 max per pass). Each slot gets 1–5 options: **option 1 stays closest to what's live**, each later one is a bigger swing. Click an option to take it, or type your own.
+4. **Everything is graded.** Options are scored against **Copy_Checks**, grounded against the fact sheet and approved evidence, checked for length against the slot's kind, and passed through the competitor swap test — the same bar as every other mode. A fact the model needed and didn't have shows up inline as `[VERIFY: …]` rather than being guessed at.
+5. **Drafts autosave** to Postgres, shared with the team, keyed by the slot's id. Each records the store copy as it stood when written, so if the live page changes underneath a draft the slot is flagged **store changed** instead of one silently overwriting the other.
+6. **Export** the outline as **Markdown** (drafts substituted in, empty slots flagged, replaced copy kept as a comment) or **JSON** (every slot with its `path`, store copy, draft and status).
+
+### How a page becomes slots
+
+Both sources normalise to one shape, `OutlineNode[]`, and `kind` is what drives everything downstream — length rules, badges, export formatting.
+
+Theme templates are the harder half: section setting keys are theme-defined, so there's no schema to read. Each string setting is classified copy-vs-config by three ordered rules — key hints (`heading` → h2, `button_label` → cta), then rejection of config *values* (hex colours, `shopify://`, URLs, numbers-with-units, booleans), then rejection of single all-lowercase tokens (`center`, `adapt`, `h2`). **The order is load-bearing**: key hints run first so `image_alt` survives despite containing "image", and the enum rejection runs last so `text_alignment: "center"` is caught even though its key hints as text. Rich-text settings are exploded into paragraphs and links; the same `heading` key is an h2 at section level and an h3 inside a block; all-config sections are dropped.
+
+Both parsers are heuristics, which is why `GET /api/outline?op=selftest` runs 26 fixture checks against them and returns markdown — **no store, key or database needed**. Changing a heuristic means adding a case proving the new behaviour is caught *and* the old ones still are. That discipline has already caught five structural bugs, including blocks nesting under whichever settings key happened to sort last.
+
+The `path` on each slot (`sections.problem.blocks.b2.settings.text`) is a write-back target that nothing uses yet. Write-back would be a deliberate, separate feature — `write_themes`, diff-and-confirm, backup-first — not a loosened check. `lib/shopify.js` refuses any GraphQL document containing `mutation` before it reaches the network.
+
+## Saved templates (⭐)
+
+Bookmark a page or template and it does two things: it lands in **⭐ Saved** in the header, and it gets **pinned to the top of the Template dropdown** under a `★ Saved` group, so the pages a writer keeps returning to are the first thing in the list rather than buried among every template in the theme. A saved source appears once — pinned at the top, not also down in its own group.
+
+Each bookmark stores a **snapshot of its outline**, so opening it is instant and works even when the store is unreachable. *Re-read from the live store* refreshes it and flags any slot whose copy has moved since a draft was written. If a saved source can't be confirmed live — removed from the theme, or the theme didn't load — selecting it opens the snapshot and says so, rather than failing on a read that can't succeed.
+
+One control means one thing: in the other three modes the Template dropdown is still the sheet's page shapes. In 📄 Live page mode the real page's own section order **is** the shape, and that's what gets passed to the writer — a more honest description than a composition string.
+
+Removing a bookmark removes the shortcut, **not the copy**: slot drafts are keyed independently of bookmarks, so a writer can draft into a page without saving it, and re-saving later brings the work back. (`DELETE /api/bookmarks/:id?purgeDrafts=1` is the explicit "throw the copy away too" path.)
 
 ## Review drafts (shared)
 
@@ -63,7 +94,7 @@ Published Google Sheet (read-only), fetched as CSV per tab:
 
 The three grading layers (LP_Checks holistic → Module_Checks per module → Copy_Checks per line) are applied in generation, the audit, and the independent review. Only **ACTIVE**-status rules are used — **except on Module_Checks**, where every row applies (see above).
 
-The app is **read-only against the sheet** — it never writes back to the sheet or any First Day platform. (Review drafts are the app's own data, stored in its Postgres database, not the sheet.)
+The app is **read-only against the sheet** — it never writes back to the sheet or any First Day platform. The same holds for Shopify in 📄 Live page mode: it reads the published theme and Online Store pages, and writes nothing. (Review drafts, slot drafts and saved templates are the app's own data, stored in its Postgres database.)
 
 ## Architecture
 
@@ -71,12 +102,18 @@ The app is **read-only against the sheet** — it never writes back to the sheet
 - **`/api/generate`, `/api/audit`, `/api/review`**: proxy the assembled prompt to Anthropic with the server-side key (structured-output tools in `lib/tools.js`).
 - **`/api/module`**: the one-module pass. Takes the assembled prompt plus base64 images and sends them as vision content blocks (images before the text block, per the Messages API). Validates media type, image count, and total payload size against the 4.5MB serverless body limit before calling out.
 - **`/api/drafts`, `/api/drafts/[id]`**: CRUD for shared review drafts in Vercel Postgres (`lib/db.js`; tables auto-created on first request).
+- **`/api/outline`**: 📄 Live page's reads, behind an `op` — `status`, `sources`, `template`, `page`, `export`, `selftest`. The parsers run server-side so there is one implementation of the copy-vs-config heuristics; the browser sends a selector and renders a tree.
+- **`/api/slots`**: the per-slot writer. Proxies the assembled prompt with `SLOTS_SCHEMA`, then **re-measures every returned variant** against its kind's word range — stating a length rule in a prompt isn't enforcing one — and merges inline `[VERIFY: …]` markers into each variant's `verify` list.
+- **`/api/slot-drafts`, `/api/bookmarks`, `/api/bookmarks/[id]`**: slot copy and saved templates.
+- **`lib/outline.js`**: the `OutlineNode` model, both parsers, per-kind length rules, and the Markdown/JSON exports. **`lib/selftest.js`**: their fixtures.
+- **`lib/shopify.js`**: read-only Admin API client (2025-10). Fetches the published theme by `roles: [MAIN]` rather than paging the theme list — stores accumulate themes and `themes(first: 25)` reliably misses the live one — and handles all three shapes of the theme-file body union (text, base64, URL).
 - **`lib/auth.js`**: optional `APP_ACCESS_TOKEN` gate on every API call.
 
 ## Notes
 
 - The Google Sheet is fetched client-side; its published-CSV endpoint returns `Access-Control-Allow-Origin: *`, so the browser can read it directly.
 - Run with `vercel dev`; deploy with `vercel` / `vercel --prod`. See [`DEPLOY.md`](DEPLOY.md).
-- Only external dependency is `@vercel/postgres`; the CSV parser, prompt assembly, and rendering are still hand-rolled.
+- Only external dependency is `@vercel/postgres`; the CSV parser, the HTML/theme-JSON parsers, prompt assembly, and rendering are all hand-rolled.
+- `GET /api/outline?op=selftest` returns the parser fixture report as markdown and exits non-zero on failure — the fastest check that a heuristic change didn't break anything.
 # app-lp-copy-creation
 # app-lp-copy-creation
