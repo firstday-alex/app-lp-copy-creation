@@ -1446,6 +1446,16 @@ function renderOutline(){
 }
 function runSummary(lr){
   let h="";
+  if(lr.running){
+    h+=`<div class="hint" style="margin-top:12px"><span class="spinner"></span> `
+      +`${lr.completed} of ${lr.batches} pass${lr.batches>1?"es":""} done · ${lr.done} of ${lr.total} slots written…`
+      +`<br>Draft → self-critique → final, scored against Copy_Checks. Options appear under each slot as passes finish.</div>`;
+  }else if(lr.batches>1){
+    h+=`<div class="hint" style="margin-top:12px">${lr.done} of ${lr.total} slots written across ${lr.batches} passes`
+      +`${lr.errors&&lr.errors.length?` · <span class="tag bad">${lr.errors.length} failed</span>`:""}</div>`;
+  }
+  if(lr.errors&&lr.errors.length)
+    h+=`<div class="copyblock" style="border-color:var(--bad);margin-top:8px">${esc(lr.errors.join("\n"))}</div>`;
   if(lr.gate) h+=`<div class="gate ${lr.gate.pass?"pass":"fail"}" style="margin-top:12px">${
     lr.gate.pass?"✓ Compliance gate PASSED":"✗ Compliance gate BLOCKED"}${
     lr.gate.blockers&&lr.gate.blockers.length?` — ${esc(lr.gate.blockers.join("; "))}`:""}</div>`;
@@ -1588,7 +1598,8 @@ function lengthTable(kinds){
     return `  ${k} — ${r?`${r.min}–${r.max} words · ${r.note}`:"no rule; match the length of what's there"}`;
   }).join("\n");
 }
-function buildSlotsPrompt(slots, nVariants){
+function buildSlotsPrompt(slots, nVariants, opts){
+  const o=opts||{};
   const b=buildBrief();
   const ev=evidenceFor(b.product,b.problems);
   const f=STATE.fact[b.product];
@@ -1604,7 +1615,10 @@ HOW THIS MODE DIFFERS:
 - You write ONLY the slots listed. Do not add slots, merge them, or return copy for anything else.
 - Each slot has a KIND, and the kind sets the length. These are hard limits, not suggestions — a headline slot must not come back as a paragraph:
 ${lengthTable(slots.map(s=>s.kind))}
-- Every slot must serve ONE page promise. State that promise first, then write to it.
+${o.promise
+? `- THE PAGE PROMISE IS ALREADY SET, by an earlier pass over this same page: "${o.promise}"
+  Restate it verbatim in page_promise and write every slot to it. Do NOT redefine it, soften it, or pick a different angle — the rest of the page is already committed to this one.`
+: `- Every slot must serve ONE page promise. State that promise first, then write to it.`}
 - Each slot gets ${nVariants} option${nVariants>1?"s":""}. Option 1 stays closest to what is on the page today, in meaning AND in length. Each later option is a bigger swing. Options must be genuinely different approaches, not synonyms of each other.
 - A slot whose current copy is empty is an unwritten slot: write it from the brief, the evidence and the surrounding lines, and say in the note what you inferred it was for.
 - Copy must fit where it sits. Each slot comes with the headings above it and the line before it — a subhead has to follow its heading, and a CTA has to follow the block it closes.
@@ -1660,20 +1674,27 @@ APPROVED EVIDENCE (reuse verbatim or tighten; do not exceed what's here):${evTxt
 CREDIBILITY ANCHORS you may cite: Advisory board (Dr. Lei Chen, Yale; Dr. Ed Giovannucci, Harvard); third-party testing; Clean Label Project certification; the 35,000-study review; 45-day guarantee.
 DIFFERENTIATION assets: No Junk(TM), Real Wholesome(R), Bio-Matched mechanism, methylfolate / Cognizin(R) / Suntheanine(R) / Livaux(R) / SNZ 1969(R), segment-specific dosing, the 3-in-1 system.
 
-SLOTS TO WRITE (${slots.length}) — return one entry per id, the same ids, in this order:
+${o.batchCount>1
+? `SLOTS TO WRITE — pass ${o.batchIndex} of ${o.batchCount} over this page (${slots.length} of the ${o.totalSlots} slots being written in total).
+The other passes cover the rest of the page; write only the slots listed here, and write them so they sit consistently with a page already committed to the promise above.`
+: `SLOTS TO WRITE (${slots.length})`} — return one entry per id, the same ids, in this order:
 ${slotList}
 
 Return one JSON object with these keys, in this order, populating every one:
-page_promise, draft [{id,text}] (your first pass, one line per slot), self_critique [{line,rule_id,problem,fix}] (what is wrong with that draft — be specific and unsparing), slots [{id,kind,variants:[{text,word_count,grounded,fact_sheet_id,verify[],copy_checks:[{id,score,justification}],note}]}] (the FINAL variants, every fix applied), compliance_gate {pass,blockers[]}, notes.`;
+page_promise, draft [{id,text}] (your first pass, one line per slot), self_critique [{line,rule_id,problem,fix}] (what is wrong with that draft — be specific and unsparing), slots [{id,kind,variants:[{text,grounded,fact_sheet_id,verify[],copy_checks:[{id,score,justification}],note}]}] (the FINAL variants, every fix applied — justification ONLY where a rule scored 0 or 1), compliance_gate {pass,blockers[]}, notes.`;
 
   return {system, user};
 }
 
+// A page's sections can carry hundreds of fields, and the response to a write is
+// slots × variants × rules — so the request has to be batched by that product, not by slot
+// count. One pass per batch keeps each request inside both the token ceiling and the 60s
+// function limit, and results render as they land, so a late failure never costs the
+// earlier passes. Asking for everything at once is what stalls: it generates until the
+// function is killed and returns nothing at all.
 async function writeSlots(ids){
   const p=pageState();
   if(!STATE.synced){ toast("Sync the sheet first — the rules and evidence come from it"); return; }
-  const MAX=40;
-  if(ids.length>MAX){ toast(`${ids.length} slots is too many for one pass — writing the first ${MAX}`); ids=ids.slice(0,MAX); }
   const slots=ids.map(id=>{
     const n=slotById(id); if(!n) return null;
     return { id:n.id, kind:n.kind, label:n.label||"", current:String(n.text||""), context:slotContext(id) };
@@ -1682,23 +1703,68 @@ async function writeSlots(ids){
 
   const nV=parseInt(val("variantCount"),10)||3;
   const model=val("model");
-  const {system,user}=buildSlotsPrompt(slots,nV);
-  setOut(`<div class="empty"><span class="spinner"></span><p>Writing ${slots.length} slot${slots.length>1?"s":""} × ${nV} option${nV>1?"s":""} with ${esc(model)}…</p>
-    <p class="hint">Draft → self-critique → final, then scored against Copy_Checks.</p></div>`);
-  try{
-    const r=await api("/api/slots",{method:"POST",body:JSON.stringify({system,user,model,slots,variants:nV})});
+  const budget=(STATE.shopify&&STATE.shopify.slotUnitBudget)||36;
+  const cap=(STATE.shopify&&STATE.shopify.slotMaxPerPass)||14;
+  const per=Math.max(1, Math.min(cap, Math.floor(budget/nV)));
+  const batches=[]; for(let i=0;i<slots.length;i+=per) batches.push(slots.slice(i,i+per));
+  const CONCURRENCY=2;
+  // Pass 1 runs alone; the rest overlap, so wall clock is roughly the first pass plus half
+  // of the remainder.
+  const rounds=1+Math.ceil(Math.max(0,batches.length-1)/CONCURRENCY);
+
+  // Every pass is a real call with real cost and latency. Past a few, say so and let them
+  // decide rather than silently starting a multi-minute job.
+  if(batches.length>4 && !confirm(
+      `${slots.length} slots × ${nV} option${nV>1?"s":""} needs ${batches.length} passes of ${per} slots.\n\n`
+      + `Two run at a time, so roughly ${Math.round(rounds*25/60*10)/10}–${Math.round(rounds*45/60*10)/10} min. `
+      + `Options appear under each slot as passes finish.\n\nRun all ${batches.length}?`)) return;
+
+  const lr=p.lastRun={ promise:"", critique:[], gate:null, warnings:[], notes:"", model,
+    running:true, completed:0, batches:batches.length, done:0, total:slots.length, errors:[] };
+
+  const merge=r=>{
     (r.slots||[]).forEach(s=>{ p.variants[s.id]=s.variants||[]; });
-    p.lastRun={ promise:r.page_promise||"", critique:r.self_critique||[],
-                gate:r.compliance_gate||null, warnings:r.warnings||[], notes:r.notes||"", model };
+    lr.critique.push(...(r.self_critique||[]));
+    lr.warnings.push(...(r.warnings||[]));
+    if(r.notes) lr.notes = lr.notes ? lr.notes+" · "+r.notes : r.notes;
+    // The gate is the worst result across passes — one blocked line blocks the page.
+    if(r.compliance_gate){
+      if(!lr.gate) lr.gate={pass:true,blockers:[]};
+      if(!r.compliance_gate.pass) lr.gate.pass=false;
+      lr.gate.blockers.push(...(r.compliance_gate.blockers||[]));
+    }
+    lr.done += (r.slots||[]).length;
+  };
+  const runPass=async(batch,idx)=>{
+    try{
+      const {system,user}=buildSlotsPrompt(batch,nV,{
+        promise:lr.promise, batchIndex:idx+1, batchCount:batches.length, totalSlots:slots.length });
+      const r=await api("/api/slots",{method:"POST",body:JSON.stringify({
+        system,user,model,slots:batch,variants:nV })});
+      if(!lr.promise && r.page_promise) lr.promise=r.page_promise;
+      merge(r);
+    }catch(e){
+      lr.errors.push(`Pass ${idx+1} of ${batches.length} (${batch.length} slots): ${e.message}`);
+    }
+    lr.completed++;
     renderOutline();
-    toast(`${(r.slots||[]).length} slot${(r.slots||[]).length===1?"":"s"} written — click an option to take it`);
-  }catch(e){
-    renderOutline();
-    setOut(document.getElementById("outBody").innerHTML
-      + `<div class="gate fail" style="margin-top:12px">⚠︎ Writing failed</div>
-         <div class="copyblock" style="border-color:var(--bad)">${esc(e.message)}</div>`);
-    wireOutline();
-  }
+  };
+
+  renderOutline();
+  // The first pass runs alone because it establishes the page promise every later pass is
+  // told to write to. Overlapping it with the others would mean each inventing its own.
+  await runPass(batches[0], 0);
+  const queue=batches.map((b,i)=>({b,i})).slice(1);
+  await Promise.all(Array.from({length:Math.min(CONCURRENCY,queue.length)}, async()=>{
+    while(queue.length){ const {b,i}=queue.shift(); await runPass(b,i); }
+  }));
+
+  if(lr.gate) lr.gate.blockers=[...new Set(lr.gate.blockers)];
+  lr.running=false;
+  renderOutline();
+  toast(lr.errors.length
+    ? `${lr.done} of ${lr.total} written · ${lr.errors.length} pass${lr.errors.length>1?"es":""} failed`
+    : `${lr.done} slot${lr.done===1?"":"s"} written — click an option to take it`);
 }
 
 /* ---------- export (rendered server-side so there is one definition of an export) ---------- */
