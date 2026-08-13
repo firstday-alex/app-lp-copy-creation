@@ -2,7 +2,7 @@ import { checkAccess } from '../lib/auth.js';
 import { readJson } from '../lib/http.js';
 import { callAnthropic } from '../lib/anthropic.js';
 import { SLOTS_SCHEMA } from '../lib/tools.js';
-import { checkLength } from '../lib/outline.js';
+import { checkLength, SLOT_UNIT_BUDGET, SLOT_MAX_PER_PASS } from '../lib/outline.js';
 
 // The per-slot writer. Same arrangement as /api/generate: the browser assembles the
 // prompt (it holds the synced sheet and the evidence), the server owns the output shape
@@ -14,9 +14,19 @@ import { checkLength } from '../lib/outline.js';
 // ignored the instruction.
 export const maxDuration = 60;
 
-// One request writes at most this many slots. Beyond it the model starts trading quality
-// per slot for coverage, and the response risks the token ceiling.
-const MAX_SLOTS = 40;
+const MAX_TOKENS = 16000;
+
+// The response is slots × variants × rules, so the limit has to be that product, not a
+// round number of slots. A 40-slot × 3-variant request needs roughly twice MAX_TOKENS: it
+// generates for the entire time budget and then truncates — and generating 16k tokens with
+// thinking on often exceeds maxDuration first, which surfaces as a dead request rather than
+// an error. So the cap is a budget, and the client batches to fit inside it.
+//
+// ~260 output tokens per variant with justifications only on failures, plus the draft and
+// critique passes. The number itself lives in lib/outline.js so the client, this route and
+// op=status can't drift apart.
+const MAX_UNITS = SLOT_UNIT_BUDGET;
+const unitsFor = (slots, variants) => slots * Math.max(1, variants);
 
 export default async function handler(req, res){
   if (req.method !== 'POST'){ res.status(405).json({ error: 'Method not allowed' }); return; }
@@ -27,16 +37,29 @@ export default async function handler(req, res){
 
     const asked = Array.isArray(slots) ? slots : [];
     if (!asked.length){ res.status(400).json({ error: 'No slots selected.' }); return; }
-    if (asked.length > MAX_SLOTS){
-      res.status(400).json({ error: `${asked.length} slots is too many for one pass — ${MAX_SLOTS} max. Select fewer, or run a section at a time.` });
-      return;
-    }
     if (asked.some(s => !s || !s.id || !s.kind)){
       res.status(400).json({ error: 'Every slot needs an id and a kind.' }); return;
     }
     const n = Math.min(5, Math.max(1, parseInt(variants, 10) || 3));
 
-    const result = await callAnthropic({ system, user, model, schema: SLOTS_SCHEMA, maxTokens: 16000 });
+    if (asked.length > SLOT_MAX_PER_PASS){
+      res.status(400).json({
+        error: `${asked.length} slots in one pass is more than the model attends to individually — ${SLOT_MAX_PER_PASS} max, whatever the option count. Batch it.`,
+        maxSlotsPerPass: SLOT_MAX_PER_PASS
+      });
+      return;
+    }
+    const units = unitsFor(asked.length, n);
+    if (units > MAX_UNITS){
+      res.status(400).json({
+        error: `${asked.length} slots × ${n} options is ${units} lines of copy — over the ${MAX_UNITS} a single pass can finish before hitting the token ceiling. `
+             + `At ${n} option${n > 1 ? 's' : ''} the limit is ${Math.max(1, Math.floor(MAX_UNITS / n))} slots per request.`,
+        maxSlotsForVariants: Math.max(1, Math.floor(MAX_UNITS / n))
+      });
+      return;
+    }
+
+    const result = await callAnthropic({ system, user, model, schema: SLOTS_SCHEMA, maxTokens: MAX_TOKENS });
 
     // Re-measure everything that came back, and say plainly what is missing.
     const kindById = {};

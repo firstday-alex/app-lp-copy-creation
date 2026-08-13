@@ -1,7 +1,8 @@
 import { checkAccess } from '../lib/auth.js';
 import { shopifyConfig, mainTheme, pageTemplateFiles, readThemeFile, listPages, readPage } from '../lib/shopify.js';
 import { readJson } from '../lib/http.js';
-import { parseThemeTemplate, parseHtmlOutline, countSlots, toMarkdown, toExportJson, KIND_RULES } from '../lib/outline.js';
+import { parseThemeTemplate, parseHtmlOutline, countSlots, toMarkdown, toExportJson,
+         KIND_RULES, SLOT_UNIT_BUDGET, SLOT_MAX_PER_PASS } from '../lib/outline.js';
 import { selftestMarkdown } from '../lib/selftest.js';
 
 // Reading a source and turning it into an outline. One route with an `op`, because the
@@ -60,7 +61,7 @@ export default async function handler(req, res){
       // the browser can badge word counts without keeping its own copy of them to drift.
       res.status(200).json({
         configured: cfg.configured, domain: cfg.domain || '', apiVersion: cfg.apiVersion,
-        rules: KIND_RULES
+        rules: KIND_RULES, slotUnitBudget: SLOT_UNIT_BUDGET, slotMaxPerPass: SLOT_MAX_PER_PASS
       });
       return;
     }
