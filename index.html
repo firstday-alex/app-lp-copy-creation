@@ -136,6 +136,18 @@
   .draft-card{display:flex;gap:12px;align-items:center;justify-content:space-between;
     border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--bg)}
   .draft-main{min-width:0} .draft-act{display:flex;gap:8px;flex:none}
+  .partlist{display:flex;gap:6px;margin-top:4px;flex-wrap:wrap}
+  .partlist label{display:flex;gap:7px;align-items:center;margin:0;font-size:13px;font-weight:500;
+    background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:7px 11px;cursor:pointer;transition:.12s;flex:1}
+  .partlist label:hover{border-color:var(--accent)}
+  .partlist label:has(input:checked){border-color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,var(--bg))}
+  .partlist input{width:auto;flex:none;margin:0;accent-color:var(--accent)}
+  .simple-part{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:8px 0;background:var(--bg)}
+  .simple-part.off{opacity:.55;border-style:dashed}
+  .sp-top{display:flex;gap:8px;align-items:center;font-size:11.5px;text-transform:uppercase;
+    letter-spacing:.05em;color:var(--muted);margin-bottom:6px}
+  .sp-top b{color:var(--ink)}
+  .sp-text{font-size:15px;line-height:1.5;white-space:pre-wrap}
   /* slot mode: a real page's copy slots */
   .ohead{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;
     color:var(--muted);margin:16px 0 4px}
@@ -179,6 +191,7 @@
         <button type="button" data-mode="audit">🔍 Grade page</button>
         <button type="button" data-mode="module">🧩 One module</button>
         <button type="button" data-mode="page">📄 Live page</button>
+        <button type="button" data-mode="simple">✨ Simple</button>
       </div>
 
       <label class="field">Template <span id="tmplHint">· the page you want to write</span></label>
@@ -236,6 +249,26 @@
         <textarea id="moduleCopy" placeholder="Paste the module's copy if you have it — otherwise it's read off the image."></textarea>
       </div>
 
+      <div id="simpleFields" style="display:none">
+        <label class="field">What's the copy about? <span>· a sentence or two is plenty</span></label>
+        <textarea id="simpleSummary" placeholder="e.g. Our multivitamin is dosed for how kids actually absorb nutrients, not scaled down from an adult pill."></textarea>
+        <label class="field">Goal <span>· what this copy has to make happen</span></label>
+        <select id="simpleGoal">
+          <option value="cta">A · Engagement — click the primary CTA</option>
+          <option value="read">B · Engagement — keep reading further</option>
+          <option value="cart">C · Add to cart</option>
+          <option value="subscribe">D · Subscribe</option>
+          <option value="learn">E · Learn more</option>
+          <option value="try">F · Try now</option>
+        </select>
+        <label class="field">Write <span>· switch off anything you don't want</span></label>
+        <div class="partlist" id="simpleParts">
+          <label><input type="checkbox" class="part-cb" value="header" checked><span>Header</span></label>
+          <label><input type="checkbox" class="part-cb" value="subheader" checked><span>Subheader</span></label>
+          <label><input type="checkbox" class="part-cb" value="body" checked><span>Body copy</span></label>
+        </div>
+      </div>
+
       <div id="pageFields" style="display:none">
         <label class="field">Options per slot <span>· 1 stays closest to what's live</span></label>
         <select id="variantCount">
@@ -255,6 +288,10 @@
       <div class="actions" id="moduleActions" style="display:none">
         <button class="btn primary" id="moduleBtn" disabled>Read image &amp; rewrite module</button>
         <button class="btn" id="modulePromptBtn" disabled>Copy module prompt</button>
+      </div>
+      <div class="actions" id="simpleActions" style="display:none">
+        <button class="btn primary" id="simpleBtn" disabled>Write it</button>
+        <button class="btn" id="simplePromptBtn" disabled>Copy prompt</button>
       </div>
       <div class="actions" id="pageActions" style="display:none">
         <button class="btn primary" id="loadPageBtn" disabled>Read page</button>
@@ -356,21 +393,60 @@ async function fetchTab(gid){
   if(!res.ok) throw new Error("HTTP "+res.status);
   return parseCSV(await res.text());
 }
+// Google throttles concurrent requests to a published sheet, and it does so intermittently
+// — so a tab that worked a minute ago can come back 429. Two tabs at a time with a short
+// retry avoids tripping it in the first place, rather than treating the failure as fatal.
+async function fetchTabWithRetry(gid, tries){
+  let last;
+  for(let i=0;i<(tries||3);i++){
+    try{ return await fetchTab(gid); }
+    catch(e){ last=e; await new Promise(r=>setTimeout(r, 400*(i+1))); }
+  }
+  throw last;
+}
 async function syncSheet(){
   setStatus("load","Syncing…");
+  const entries = Object.entries(TABS);
+  const failures = [];
+  const LANES = 2;
+  const queue = entries.slice();
+  await Promise.all(Array.from({length:Math.min(LANES,queue.length)}, async()=>{
+    while(queue.length){
+      const [name,gid]=queue.shift();
+      try{ STATE.raw[name]=await fetchTabWithRetry(gid); }
+      catch(e){
+        // A failed tab becomes an EMPTY ROWS ARRAY, never an error object. It used to be
+        // stored as {__err}, and because `rows.length < 2` is false for undefined, that
+        // object reached `rows[0].map(...)` and threw inside buildModel — which syncSheet
+        // caught, so populateUI never ran and EVERY dropdown in the app went blank on one
+        // throttled tab. Degrade per-tab; never let one take the page down.
+        STATE.raw[name]=[];
+        failures.push(name);
+      }
+    }
+  }));
+
   try{
-    const entries = Object.entries(TABS);
-    const results = await Promise.all(entries.map(([,gid])=>fetchTab(gid).catch(e=>({__err:e.message}))));
-    entries.forEach(([name],idx)=>{ STATE.raw[name]=results[idx]; });
     buildModel();
-    populateUI();
-    STATE.synced=true;
-    const ts=new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-    setStatus("ok", `Synced ${STATE.templates.length} templates · ${STATE.products.length} products · ${ts}`);
-    refreshButtons();
   }catch(e){
-    setStatus("err","Sync failed: "+e.message);
+    setStatus("err","Couldn't read the sheet: "+e.message);
+    return;
   }
+  // populateUI runs whatever buildModel managed to produce — partial data still beats an
+  // empty panel, and the status line says what's missing.
+  populateUI();
+  STATE.synced = STATE.templates.length>0 && STATE.products.length>0;
+  STATE.sheetFailures = failures;
+
+  const ts=new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+  if(failures.length){
+    setStatus("err", `${entries.length-failures.length}/${entries.length} tabs · ${failures.join(", ")} unavailable · ${ts}`);
+  }else if(!STATE.synced){
+    setStatus("err", `Sheet reachable but empty — check it's still published to the web · ${ts}`);
+  }else{
+    setStatus("ok", `Synced ${STATE.templates.length} templates · ${STATE.products.length} products · ${ts}`);
+  }
+  refreshButtons();
 }
 function setStatus(kind,text){
   document.getElementById("statusDot").className="status-dot "+(kind||"");
@@ -378,8 +454,11 @@ function setStatus(kind,text){
 }
 
 /* ---------- Build model from raw rows ---------- */
+// Every reader goes through asRows first. `rows.length < 2` does not catch a non-array —
+// `undefined < 2` is false — so an unexpected shape used to reach rows[0].map() and throw.
+const asRows = r => Array.isArray(r) ? r : [];
 function rowsAsObjects(rows){
-  if(!rows||rows.length<2) return [];
+  if(!Array.isArray(rows)||rows.length<2) return [];
   const head=rows[0].map(clean);
   return rows.slice(1).filter(r=>r.some(c=>clean(c))).map(r=>{
     const o={}; head.forEach((h,i)=>o[h]=clean(r[i])); return o;
@@ -387,12 +466,12 @@ function rowsAsObjects(rows){
 }
 function buildModel(){
   // templates
-  STATE.templates = rowsAsObjects(STATE.raw.templates||[]).map(o=>({
+  STATE.templates = rowsAsObjects(asRows(STATE.raw.templates)).map(o=>({
     name:o.Template, composition:o.Composition
   })).filter(t=>t.name);
 
   // rules — only ACTIVE-status rows apply (README: "Only ACTIVE-status rules apply")
-  const active = rows => rowsAsObjects(rows||[]).filter(r=>/active/i.test(r.Status||""));
+  const active = rows => rowsAsObjects(asRows(rows)).filter(r=>/active/i.test(r.Status||""));
   STATE.lpChecks     = active(STATE.raw.lp_checks);       // holistic LP requirements (R1–R7)
   STATE.moduleChecks = active(STATE.raw.module_checks);   // per-section requirements
   STATE.copyChecks   = active(STATE.raw.copy_checks);     // per-line rules 1–6
@@ -402,7 +481,7 @@ function buildModel(){
   // including header/paragraph congruency and the mobile-fold check. `moduleAll` is
   // what gets graded; `moduleNoStatus` is only used to tell the team which rows the
   // app is gating ahead of the sheet.
-  STATE.moduleAll = rowsAsObjects(STATE.raw.module_checks||[]).filter(r=>r["Rule ID"]&&r["Rule Name"]);
+  STATE.moduleAll = rowsAsObjects(asRows(STATE.raw.module_checks)).filter(r=>r["Rule ID"]&&r["Rule Name"]);
   const sheetActive = new Set(STATE.moduleChecks.map(r=>r["Rule ID"]));
   STATE.moduleNoStatus = STATE.moduleAll.filter(r=>!sheetActive.has(r["Rule ID"]));
   // Copy_Checks pass logic (per README): every line must satisfy ALL of rules 1–3
@@ -413,7 +492,7 @@ function buildModel(){
 
   // problems by product
   const pbp={}; const prodOrder=[];
-  (STATE.raw.problems||[]).slice(1).forEach(r=>{
+  asRows(STATE.raw.problems).slice(1).forEach(r=>{
     const prod=clean(r[0]), prob=clean(r[1]), main=/^y/i.test(clean(r[2]));
     if(!prod||!prob) return;
     if(!pbp[prod]){ pbp[prod]=[]; prodOrder.push(prod); }
@@ -424,7 +503,7 @@ function buildModel(){
 
   // product info (fact sheet) by product name
   const fact={};
-  rowsAsObjects(STATE.raw.product_info||[]).forEach(o=>{
+  rowsAsObjects(asRows(STATE.raw.product_info)).forEach(o=>{
     const prod=o["Product Name"]; if(!prod) return;
     fact[prod]={ productId:o["Product ID"], variantId:o["Variant ID"], sku:o.SKU,
       nutrients:o.Nutrients, link:o.Link };
@@ -434,7 +513,7 @@ function buildModel(){
   Object.keys(fact).forEach(p=>{ if(p!=="All Products" && !STATE.products.includes(p)) STATE.products.push(p); });
 
   // Hooks / Claims / Quotes — positional [product, problem, text, status, notes, source]
-  const pack = rows => (rows||[]).slice(1).map(r=>({
+  const pack = rows => asRows(rows).slice(1).map(r=>({
     product:clean(r[0]), problem:clean(r[1]), text:clean(r[2]),
     status:clean(r[3]), notes:clean(r[4]), source:clean(r[5])
   })).filter(x=>x.text);
@@ -1283,6 +1362,184 @@ Return your review via the emit_review tool, populating every field.`;
   return {system, user};
 }
 
+/* ---------- Simple mode: a summary in, header / subheader / body out ---------- */
+// The goal is the load-bearing input. The same summary written to make someone click a CTA
+// and written to make them keep reading are different pieces of copy, so the goal carries
+// its own brief: what the reader must believe, and what the copy must not do.
+const SIMPLE_GOALS = {
+  cta:      { label:"click the primary CTA",
+              brief:"The reader should finish the copy already reaching for the button. Build one clear reason to act now and remove the hesitation that stops them. Do not explain everything — leave the detail to the page and spend the words on momentum.",
+              cta:"Name the button text explicitly in next_action." },
+  read:     { label:"keep reading further down the page",
+              brief:"The job is to buy the next scroll, not the sale. Open a question the reader now needs answered, and deliberately do NOT resolve it — an unresolved, specific curiosity beats a satisfying summary. Never close with a call to action; closing the loop here is the failure mode.",
+              cta:"next_action is what they read next, not a button." },
+  cart:     { label:"add to cart",
+              brief:"The reader is deciding, not discovering. Answer the last objection — is it right for my child, will they take it, can I stop — and make the product feel already chosen. Concrete and specific beats enthusiastic.",
+              cta:"next_action is the add-to-cart wording." },
+  subscribe:{ brief:"Subscription is a commitment, so the copy must make the ongoing version feel like the obvious form rather than an upsell: the habit, the not-running-out, the ease of changing your mind. Name the escape hatch — it is what makes subscribing feel safe.",
+              label:"subscribe", cta:"next_action is the subscribe wording." },
+  learn:    { label:"learn more",
+              brief:"The reader is curious but not convinced, and pressure loses them. Promise something specific they will understand by the end — the mechanism, the evidence, the why — and make the click feel like reading rather than buying.",
+              cta:"next_action is the learn-more wording." },
+  try:      { label:"try it now",
+              brief:"Lower the cost of starting. Make the first step feel small, reversible and immediate, and lean on the guarantee or the ease of stopping rather than on the strength of the claim.",
+              cta:"next_action is the try-now wording." }
+};
+const simpleParts = () =>
+  [...document.querySelectorAll("#simpleParts .part-cb:checked")].map(cb=>cb.value);
+const PART_LABEL = { header:"Header", subheader:"Subheader", body:"Body copy" };
+
+function buildSimplePrompt(){
+  const b=buildBrief();
+  const ev=evidenceFor(b.product,b.problems);
+  const f=STATE.fact[b.product];
+  const summary=val("simpleSummary").trim();
+  const goalKey=val("simpleGoal")||"cta";
+  const goal=SIMPLE_GOALS[goalKey];
+  const parts=simpleParts();
+  const evTxt=(label,arr)=>arr.length?`\n${label}:\n`+arr.map(x=>`  - [${x.problem||"general"}] ${x.text}${x.source?`  (source: ${x.source})`:""}`).join("\n"):"";
+  const mand=STATE.copyMandatory.map(r=>r["Rule ID"]).join(", ")||"1, 2, 3";
+  const opt =STATE.copyOptional.map(r=>r["Rule ID"]).join(", ")||"4, 5, 6";
+  const rule=k=>{ const r=(STATE.kindRules||{})[k]; return r?`${r.min}–${r.max} words`:"as short as it can be"; };
+
+  const system =
+`You are the copy engine for First Day, a Bio-Matched children's multivitamin brand. In this mode you write SHORT-FORM copy from a one-line summary — a header, a subheader and a body paragraph — every word of it aimed at one named goal. You NEVER invent facts, studies, dosages, or ingredient claims. If Product Info doesn't support a claim, you cut the claim.
+
+THE GOAL — ${goal.label}:
+${goal.brief}
+${goal.cta}
+This goal decides what the copy is for. Two pieces of copy from the same summary but different goals should not be interchangeable; if yours would be, you have written to the summary instead of to the goal.
+
+WRITE EXACTLY THESE PARTS: ${parts.map(p=>PART_LABEL[p]).join(", ")||"(none selected)"}
+${["header","subheader","body"].map(p=>parts.includes(p)
+  ? `  ${PART_LABEL[p]} — ${p==="header"?rule("H1"):p==="subheader"?rule("H3"):rule("P")}.`
+  : `  ${PART_LABEL[p]} — NOT REQUESTED. Return an empty string for it. Do not write it, and do not fold what it would have said into the parts that were requested.`).join("\n")}
+
+RULES:
+- One idea per part. The header carries the promise; the subheader earns it; the body makes it concrete. Don't restate the header in the subheader.
+- Plain words a tired parent reads in one pass. No jargon, no stacked clauses, no colons doing structural work.
+- Any fact you need and do not have goes INLINE as [VERIFY: what you need]. Never guess a number and never quietly drop the point.
+- No disease claims: nothing that treats, prevents, cures or diagnoses any condition, including ADHD, autism, anxiety, and immunity-as-protection.
+- Nothing a competitor could say verbatim. Test each line against ${COMPETITORS.join(", ")} — if it survives the swap, rewrite it around a First-Day-only asset.
+- Return the copy text only: no labels, no quotes, no markdown.
+
+WORKFLOW: state what the goal demands (goal_read) → draft → criticise the draft specifically and unsparingly, judged on whether it drives the goal → write the final copy with every fix applied → score it.
+
+COPY_CHECKS — score the final copy 0/1/2 on each:
+${ruleLines(STATE.copyChecks)}
+Pass logic: every line satisfies ALL of rules ${mand} and at least ONE of rules ${opt}.
+
+PASS CRITERIA: the goal is served by wording, not by assertion; no Copy_Checks rule at 0; every falsifiable claim traceable to Product Info or approved evidence; every unsupported fact marked [VERIFY:].`;
+
+  const user =
+`WHAT THE COPY IS ABOUT
+${summary||"(nothing given — say so in notes rather than inventing a subject)"}
+
+GOAL: ${goal.label}
+PARTS REQUESTED: ${parts.map(p=>PART_LABEL[p]).join(", ")||"(none)"}
+
+CONTEXT
+  Product: ${b.product}
+  Problems / angles: ${b.problems.length?b.problems.join("; "):"(none specified)"}
+  Channel: ${b.channel}
+
+PRODUCT INFO (the ONLY source for dosages/ingredients):
+${f?`  SKU: ${f.sku} · Product ID: ${f.productId}\n  Nutrients:\n${(f.nutrients||"(none listed)").split("\n").map(l=>"    "+l).join("\n")}`:"  (no product info row for this product — do not state any dosage)"}
+
+APPROVED EVIDENCE (reuse verbatim or tighten; do not exceed what's here):${evTxt("Hooks",ev.hooks)}${evTxt("Claims",ev.claims)}${evTxt("Quotes",ev.quotes)}
+
+CREDIBILITY ANCHORS you may cite: Advisory board (Dr. Lei Chen, Yale; Dr. Ed Giovannucci, Harvard); third-party testing; Clean Label Project certification; the 35,000-study review; 45-day guarantee.
+DIFFERENTIATION assets: No Junk(TM), Real Wholesome(R), Bio-Matched mechanism, methylfolate / Cognizin(R) / Suntheanine(R) / Livaux(R) / SNZ 1969(R), segment-specific dosing, the 3-in-1 system.
+
+Return one JSON object with these keys, in this order: goal_read, draft {header,subheader,body}, self_critique [{line,rule_id,problem,fix}], copy {header,subheader,body} (empty string for any part not requested), goal_fit {mechanism,next_action,risk}, grounded, fact_sheet_ids[], verify[], copy_checks [{id,score,justification}], compliance_gate {pass,blockers[]}, notes.`;
+
+  return {system, user};
+}
+
+async function runSimple(){
+  if(!STATE.synced){ toast("Sync the sheet first — the rules and evidence come from it"); return; }
+  const parts=simpleParts();
+  if(!parts.length){ toast("Pick at least one of header / subheader / body"); return; }
+  const {system,user}=buildSimplePrompt();
+  const model=val("model");
+  document.getElementById("outMeta").textContent="";
+  setOut(`<div class="empty"><span class="spinner"></span><p>Writing ${parts.map(p=>PART_LABEL[p].toLowerCase()).join(" + ")} with ${esc(model)}…</p>
+    <p class="hint">Draft → self-critique → final, scored against Copy_Checks.</p></div>`);
+  try{
+    const r=await api("/api/generate",{method:"POST",body:JSON.stringify({system,user,model,kind:"simple"})});
+    renderSimple(r, model, parts);
+  }catch(e){
+    setOut(`<div class="gate fail">⚠︎ Couldn't write it</div>
+      <div class="copyblock" style="border-color:var(--bad)">${esc(e.message)}</div>
+      <p class="hint">You can always <b>Copy prompt</b> and paste it into Claude instead.</p>`);
+  }
+}
+
+function renderSimple(r, model, parts){
+  const gate=r.compliance_gate||{pass:false,blockers:["No gate returned"]};
+  const copy=r.copy||{};
+  const fit=r.goal_fit||{};
+  const goal=SIMPLE_GOALS[val("simpleGoal")||"cta"];
+  document.getElementById("outMeta").textContent="· simple · "+goal.label;
+  let h="";
+  h+=`<div class="gate ${gate.pass?"pass":"fail"}">${gate.pass?"✓ Compliance gate PASSED":"✗ Compliance gate BLOCKED"}${
+      gate.blockers&&gate.blockers.length?` — ${esc(gate.blockers.join("; "))}`:""}</div>`;
+  h+=`<div class="hint" style="margin:0">Written to <b>${esc(goal.label)}</b> · ${esc(model)}${
+      r.grounded===false?` · <span class="tag bad">ungrounded</span>`:""}${
+      (r.fact_sheet_ids||[]).length?` · ${r.fact_sheet_ids.map(i=>`<code class="mini">${esc(i)}</code>`).join(" ")}`:""}</div>`;
+  if(r.goal_read) h+=`<div class="kv" style="margin-top:10px"><b>What the goal demands</b>${esc(r.goal_read)}</div>`;
+
+  // The copy itself, each part separately copyable — a writer takes one line at a time.
+  h+=`<div class="section-title">The copy</div>`;
+  ["header","subheader","body"].forEach(p=>{
+    const text=String(copy[p]||"").trim();
+    if(!parts.includes(p)){
+      if(text) h+=`<div class="simple-part off"><b>${PART_LABEL[p]}</b><span class="tag warn">not requested, but returned anyway</span><div>${esc(text)}</div></div>`;
+      return;
+    }
+    h+=`<div class="simple-part">
+      <div class="sp-top"><b>${PART_LABEL[p]}</b>
+        <span class="tag">${wordsIn(text)}w</span>
+        <button class="btn ghost" data-copypart="${p}" style="padding:2px 8px;font-size:11.5px">Copy</button></div>
+      <div class="sp-text" data-text="${p}">${text?esc(text):'<span class="hint">(nothing returned for this part)</span>'}</div>
+    </div>`;
+  });
+
+  if((r.verify||[]).length)
+    h+=`<div class="hint" style="margin-top:10px"><span class="tag warn">verify before publishing</span> ${esc(r.verify.join(" · "))}</div>`;
+
+  if(fit.mechanism||fit.next_action||fit.risk){
+    h+=`<div class="section-title">Why it should work</div>`;
+    if(fit.mechanism)   h+=`<div class="kv"><b>Mechanism</b>${esc(fit.mechanism)}</div>`;
+    if(fit.next_action) h+=`<div class="kv"><b>Next action</b>${esc(fit.next_action)}</div>`;
+    if(fit.risk)        h+=`<div class="kv"><b>Where it loses people</b>${esc(fit.risk)}</div>`;
+  }
+  if((r.self_critique||[]).length){
+    h+=`<details style="margin-top:12px"><summary>Self-critique of its own first pass (${r.self_critique.length})</summary>`;
+    h+=`<div style="overflow-x:auto"><table><tr><th>Line</th><th>Rule</th><th>Problem</th><th>Fix applied</th></tr>`;
+    r.self_critique.forEach(c=>h+=`<tr><td>${esc(c.line||"—")}</td><td>${esc(c.rule_id||"")}</td><td>${esc(c.problem||"")}</td><td>${esc(c.fix||"")}</td></tr>`);
+    h+=`</table></div></details>`;
+  }
+  if((r.copy_checks||[]).length){
+    h+=`<div class="section-title">Copy_Checks</div><div style="overflow-x:auto"><table><tr><th>Rule</th><th>Score</th><th>Why</th></tr>`;
+    r.copy_checks.forEach(c=>h+=`<tr><td>${esc(c.id)}</td><td><span class="score s${c.score}">${c.score}</span></td><td>${esc(c.justification||"")}</td></tr>`);
+    h+=`</table></div>`;
+  }
+  if(r.notes) h+=`<div class="hint" style="margin-top:10px">${esc(r.notes)}</div>`;
+
+  h+=`<div class="actions"><button class="btn" id="spCopyAll">Copy all</button></div>`;
+  setOut(h);
+
+  const textOf=p=>String((r.copy||{})[p]||"").trim();
+  document.querySelectorAll("[data-copypart]").forEach(btn=>btn.onclick=()=>{
+    navigator.clipboard.writeText(textOf(btn.dataset.copypart)); toast(PART_LABEL[btn.dataset.copypart]+" copied");
+  });
+  document.getElementById("spCopyAll").onclick=()=>{
+    navigator.clipboard.writeText(parts.map(p=>textOf(p)).filter(Boolean).join("\n\n"));
+    toast("Copied");
+  };
+}
+
 /* ---------- Live-page mode: write copy into a real page's slots ---------- */
 // The outline comes from the published theme or an Online Store page and is READ-ONLY:
 // nothing in this app writes to Shopify. What a writer produces lives in the app's own
@@ -2071,6 +2328,9 @@ function refreshButtons(){
   // Reading a page needs Shopify, not the sheet. Writing into its slots needs both, and
   // writeSlots() says so rather than the Read button pretending to be the blocker.
   const pageReady  = !!currentSource();
+  const simpleReady = STATE.synced && val("simpleSummary").trim() && simpleParts().length>0;
+  document.getElementById("simpleBtn").disabled=!simpleReady;
+  document.getElementById("simplePromptBtn").disabled=!simpleReady;
   document.getElementById("loadPageBtn").disabled=!pageReady;
   document.getElementById("genBtn").disabled=!writeReady;
   document.getElementById("promptBtn").disabled=!writeReady;
@@ -2089,7 +2349,14 @@ function refreshButtons(){
     if(!STATE.synced) return "Ready to read. Sync the sheet before writing — the rules and evidence come from it.";
     return "Ready. Read the page, then write its empty or selected slots.";
   };
-  const hint = mode==="page"
+  const simpleHint = () => !STATE.synced
+      ? "Sync the sheet to load the rules & evidence."
+      : !val("simpleSummary").trim() ? "Say in a sentence what the copy is about."
+      : !simpleParts().length ? "Pick at least one of header / subheader / body."
+      : "Ready. It writes only the parts you've ticked, aimed at the goal.";
+  const hint = mode==="simple"
+    ? simpleHint()
+    : mode==="page"
     ? pageHint()
     : !STATE.synced
       ? "Sync the sheet to load templates, products & evidence."
@@ -2114,10 +2381,13 @@ function setMode(mode){
   show("moduleActions",mode==="module","flex");
   show("pageFields",   mode==="page");
   show("pageActions",  mode==="page","flex");
+  show("simpleFields", mode==="simple");
+  show("simpleActions",mode==="simple","flex");
   document.getElementById("tmplHint").textContent =
     mode==="audit" ? "· the page shape to rewrite into"
     : mode==="module" ? "· the page this module belongs to"
     : mode==="page" ? "· a real page from the live store · ★ saved first"
+    : mode==="simple" ? "· not used in this mode"
     : "· the page you want to write";
   // Switching in or out of page mode swaps what the dropdown lists entirely.
   refreshTemplateSelect();
@@ -2135,6 +2405,14 @@ document.getElementById("syncBtn").onclick=syncSheet;
 document.getElementById("draftsBtn").onclick=renderDraftsList;
 document.getElementById("marksBtn").onclick=renderBookmarksList;
 document.getElementById("loadPageBtn").onclick=()=>loadPage();
+document.getElementById("simpleBtn").onclick=runSimple;
+document.getElementById("simpleSummary").oninput=refreshButtons;
+document.querySelectorAll("#simpleParts .part-cb").forEach(cb=>cb.onchange=refreshButtons);
+document.getElementById("simplePromptBtn").onclick=()=>{
+  const {system,user}=buildSimplePrompt();
+  navigator.clipboard.writeText(`===== SYSTEM =====\n${system}\n\n===== TASK =====\n${user}`);
+  toast("Prompt copied — paste into Claude");
+};
 document.getElementById("reloadSrcBtn").onclick=loadSources;
 document.getElementById("template").onchange=()=>{ updateComposition(); refreshButtons(); };
 document.getElementById("product").onchange=()=>{updateProblems();updateEvidence();};
