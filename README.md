@@ -7,10 +7,12 @@ It's a **Vercel app**: a static frontend (`index.html`) + serverless functions i
 ## What it does
 
 1. **Syncs the sheet live** — pulls every tab from the published CSV on load (and on demand via *↻ Sync sheet*). Edit the sheet, re-sync, and the rules/evidence update automatically.
+
+   Tabs are fetched **two at a time with a short retry**, because Google throttles concurrent requests to a published sheet and does so intermittently. A tab that still fails degrades to empty and is **named in the status bar** — it no longer takes the rest of the app with it. (It used to: a failed tab was stored as an error object, `rows.length < 2` doesn't catch a non-array, so it threw inside `buildModel`, the sync's own `catch` swallowed it, and every dropdown in the app silently went blank on one throttled request.)
 2. **Build a brief** — pick a **template** (from the Templates tab), a **product/segment**, a **problem/angle** (★ = primary, from the Problems tab), a **channel**, a working title, and an optional big promise (left blank, the AI infers and declares one).
 3. **Assembles the prompt** exactly per the sheet's README workflow — bakes in the LP content requirements (R1–R7), the Copy Checks scoring rubric (R1–R6), the competitor swap test, and the credibility/differentiation assets. Only **ACTIVE** rules are included.
 4. **Grounds it in evidence** — injects that product's fact-sheet nutrients (the only allowed source for dosages) plus the approved claims, statistics, and reviews matching the selected product + problem. Shown live in the *Evidence library* panel.
-5. **Four modes** — *✍️ Write new* (a whole page from a brief), *🔍 Grade page* (score a live page and rewrite it), *🧩 One module*, and *📄 Live page* (write copy into a real Shopify page's slots) — the last two are below.
+5. **Five modes** — *✍️ Write new* (a whole page from a brief), *🔍 Grade page* (score a live page and rewrite it), *🧩 One module*, *📄 Live page* (write copy into a real Shopify page's slots), and *✨ Simple* (short-form copy from a one-line summary) — the last three are below.
 6. **Generates + scores** — two paths:
    - **Generate copy** — posts the assembled prompt to `/api/generate`, which calls Anthropic with the **server-side key** and renders the result inline: final copy, LP-requirement checklist, per-line Copy Check scores (0/1/2), claim→fact-sheet mapping, competitor-swap results, and a **PASS/FAIL compliance gate**.
    - **Copy full prompt** — copies the complete system + task prompt to paste into Claude manually. Works offline, no key needed.
@@ -34,6 +36,17 @@ Same loop as the LP, scoped to a **single module** and driven by an **image of t
 Only `Module_Checks` gets this treatment — `LP_Checks` and `Copy_Checks` are fully `ACTIVE` in the sheet and still follow the ACTIVE-only rule. The Brief panel states the divergence in every mode; setting `Status` to `ACTIVE` on those four rows makes the sheet agree with what the app already enforces.
 
 Most module rules are written as a bare question with no `Score 0/1/2 =` anchors (only rule 1 has them). The prompts say which rules have anchors so those get applied literally, and instruct the model to score the unanchored ones 2 / 1 / 0 on whether the module clearly, partly, or doesn't satisfy the question — and to state what it judged that on. Filling in the anchor columns in the sheet will tighten those scores.
+
+## Simple (✨ mode)
+
+The short path: type a sentence about the copy, pick what to write and what it has to achieve, get it.
+
+1. **Say what it's about** — a sentence or two.
+2. **Pick the goal.** This is the load-bearing input, not a label: **A** click the primary CTA · **B** keep reading further · **C** add to cart · **D** subscribe · **E** learn more · **F** try now. Each carries its own brief, and they pull in genuinely different directions — *keep reading* is explicitly forbidden from closing with a call to action, because resolving the loop is that goal's failure mode, while *click the CTA* has to name the button text. Two pieces of copy written from the same summary for different goals should not be interchangeable.
+3. **Toggle the parts** — Header, Subheader, Body copy. A part you switch off returns an empty string and its content is *not* folded into the parts you kept.
+4. **Get it back** with each part separately copyable, plus what the goal demanded, the mechanism it's betting on, the next action, and **where it loses people** — same `draft → self-critique → final` loop, evidence grounding, `[VERIFY: …]` gaps and Copy_Checks scoring as every other mode.
+
+Runs through `/api/generate` with `kind: "simple"` rather than its own route — a Vercel Hobby deployment caps at 12 serverless functions and this app is at 11.
 
 ## Live page (📄 mode)
 
