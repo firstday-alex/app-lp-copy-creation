@@ -32,7 +32,7 @@
   .sync{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--muted)}
   .sync b{color:var(--ink)}
   .status-dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
-  .status-dot.ok{background:var(--good)} .status-dot.err{background:var(--bad)} .status-dot.load{background:var(--warn);animation:pulse 1s infinite}
+  .status-dot.ok{background:var(--good)} .status-dot.err{background:var(--bad)} .status-dot.warn{background:var(--warn)} .status-dot.load{background:var(--warn);animation:pulse 1s infinite}
   @keyframes pulse{50%{opacity:.35}}
   .btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);
     padding:8px 13px;border-radius:10px;cursor:pointer;font-weight:600;font-size:13px;transition:.12s}
@@ -388,43 +388,152 @@ const clean = s => (s||"").trim();
 const norm = s => (s||"").toLowerCase().replace(/[™®"'"'`]/g,"").replace(/\s+/g," ").trim();
 
 /* ---------- Sync ---------- */
-async function fetchTab(gid){
-  const res = await fetch(csvUrl(gid), {redirect:"follow"});
-  if(!res.ok) throw new Error("HTTP "+res.status);
-  return parseCSV(await res.text());
+// How Google actually fails here matters, because it decides the whole shape of this code:
+// a throttled request to a published sheet does NOT come back 429. It 307s to
+// googleusercontent.com and then the redirect target simply never answers. `fetch` has no
+// default timeout, so that request never settles — which used to mean the lane never
+// advanced, Promise.all never resolved, and the app sat on "Syncing…" forever with no way
+// to tell slow from stuck. The retry below was written for exactly this case and never ran,
+// because a hang throws nothing to catch.
+//
+// So every attempt gets its own deadline. A hang becomes a timeout, a timeout is an error,
+// and an error is something the retry can act on.
+// These numbers come from measuring the real sheet in Chrome, and the measurement is the
+// whole argument for them: a tab either answers in 270–800ms or it never answers at all.
+// Given a 20s ceiling, the stuck ones still sat there at 20s — they are permanent hangs,
+// not slow responses, so waiting longer never once paid. Retrying, on the other hand,
+// almost always works immediately, because the hang is per-request rather than per-tab.
+//
+// So: give up fast, ask again. Tuned against three configurations over repeated cold loads
+// — 2s/5s cleared all ten tabs every time and averaged 5.5s, where a patient 3s/8s averaged
+// 8.7s and still lost a tab, and a twitchier 1.5s/3s spent its time re-asking questions
+// that had already been answered.
+const FIRST_TRY_MS = 2000;
+const RETRY_MS = 5000;
+const SYNC_DEADLINE_MS = 30000; // the whole sync, retries included — never longer than this
+
+async function fetchTab(gid, ms){
+  const ctl = new AbortController();
+  const timer = setTimeout(()=>ctl.abort(), ms || RETRY_MS);
+  try{
+    const res = await fetch(csvUrl(gid), {redirect:"follow", signal:ctl.signal});
+    if(!res.ok) throw new Error("HTTP "+res.status);
+    return parseCSV(await res.text());
+  }catch(e){
+    throw ctl.signal.aborted ? new Error("timed out") : e;
+  }finally{
+    clearTimeout(timer);
+  }
 }
-// Google throttles concurrent requests to a published sheet, and it does so intermittently
-// — so a tab that worked a minute ago can come back 429. Two tabs at a time with a short
-// retry avoids tripping it in the first place, rather than treating the failure as fatal.
-async function fetchTabWithRetry(gid, tries){
+// Retries with a short backoff, and stops early if the sync as a whole is out of time.
+// The attempt count is deliberately generous (5): when Google is healthy every tab lands on
+// the first try and the extra attempts cost nothing, and when it is not, the thing that
+// recovers a tab is asking again. SYNC_DEADLINE_MS, not the attempt count, is what bounds
+// how long anyone waits — so the retries can be greedy without the sync ever running long.
+async function fetchTabWithRetry(gid, tries, deadline){
+  const n = tries || 3;
   let last;
-  for(let i=0;i<(tries||3);i++){
-    try{ return await fetchTab(gid); }
-    catch(e){ last=e; await new Promise(r=>setTimeout(r, 400*(i+1))); }
+  for(let i=0;i<n;i++){
+    const left = deadline - Date.now();
+    if(left <= 0) throw last || new Error("out of time");
+    try{ return await fetchTab(gid, Math.min(i===0 ? FIRST_TRY_MS : RETRY_MS, left)); }
+    catch(e){
+      last = e;
+      // No backoff after the final attempt — nothing follows it but the throw.
+      if(i < n-1) await new Promise(r=>setTimeout(r, 400*(i+1)));
+    }
   }
   throw last;
 }
+
+// The last good copy of every tab, so a throttled tab degrades to yesterday's rules rather
+// than to an empty dropdown, and a reload has something to paint before the network answers.
+const CACHE_KEY = "fd_sheet_cache_v1";
+function readCache(){
+  try{ return JSON.parse(localStorage.getItem(CACHE_KEY) || "{}"); }catch{ return {}; }
+}
+function writeCache(tabs){
+  try{ localStorage.setItem(CACHE_KEY, JSON.stringify({ at:Date.now(), tabs })); }catch{}
+}
+
 async function syncSheet(){
-  setStatus("load","Syncing…");
   const entries = Object.entries(TABS);
   const failures = [];
-  const LANES = 2;
+  const fromCache = [];
+  const saved = readCache();
+  const cache = saved.tabs || {};
+  const deadline = Date.now() + SYNC_DEADLINE_MS;
+
+  // Paint the last sync before the network is consulted. The sheet is a slowly-changing
+  // quality system, so the cached copy is nearly always the same copy that is about to come
+  // back — and this way the app is usable immediately instead of after a round trip to
+  // Google, whatever Google is doing today. The fetch below can only improve on it.
+  //
+  // First paint only. Re-priming during a manual ↻ Sync would repopulate the pickers under
+  // someone who is mid-brief, and they already have this data on screen.
+  let primed = false;
+  if(!STATE.synced && Object.keys(cache).length){
+    STATE.raw = Object.assign({}, cache);
+    try{
+      buildModel();
+      populateUI();
+      STATE.synced = STATE.templates.length>0 && STATE.products.length>0;
+      primed = STATE.synced;
+      refreshButtons();
+    }catch(e){ /* a bad cache is not worth failing over — the fetch below replaces it */ }
+  }
+
+  let done = 0;
+  const progress = () => setStatus("load",
+    primed ? `Refreshing… ${done}/${entries.length} tabs · showing last sync`
+           : `Syncing… ${done}/${entries.length} tabs`);
+  progress();
+  // This used to be 2, on the theory that Google throttles concurrent requests to a
+  // published sheet. Measured in Chrome against the real sheet, that is not what happens:
+  // at one lane, 10 tabs took 39s and four of them timed out; at ten lanes, 1s and none
+  // did. Re-running in the opposite order moved the failures to whichever trial went first.
+  // The failures track a COLD start, not concurrency — which is why they show up on page
+  // load, the one moment the app can least afford them. Serialising made it worse by
+  // stretching the window in which a cold request can hang.
+  //
+  // Four lanes: ~1–2.6s for the whole sheet, and no one stalled tab holding up more than a
+  // quarter of the queue. The retry above, not the lane count, is what handles a bad tab.
+  const LANES = 4;
   const queue = entries.slice();
   await Promise.all(Array.from({length:Math.min(LANES,queue.length)}, async()=>{
     while(queue.length){
       const [name,gid]=queue.shift();
-      try{ STATE.raw[name]=await fetchTabWithRetry(gid); }
+      try{ STATE.raw[name]=await fetchTabWithRetry(gid, 5, deadline); }
       catch(e){
-        // A failed tab becomes an EMPTY ROWS ARRAY, never an error object. It used to be
-        // stored as {__err}, and because `rows.length < 2` is false for undefined, that
-        // object reached `rows[0].map(...)` and threw inside buildModel — which syncSheet
-        // caught, so populateUI never ran and EVERY dropdown in the app went blank on one
-        // throttled tab. Degrade per-tab; never let one take the page down.
-        STATE.raw[name]=[];
-        failures.push(name);
+        // A failed tab becomes ROWS, never an error object. It used to be stored as
+        // {__err}, and because `rows.length < 2` is false for undefined, that object
+        // reached `rows[0].map(...)` and threw inside buildModel — which syncSheet caught,
+        // so populateUI never ran and EVERY dropdown in the app went blank on one throttled
+        // tab. Degrade per-tab; never let one take the page down.
+        //
+        // Last good copy first, empty array only if we have never read this tab. Google's
+        // throttling is intermittent and the sheet changes rarely, so the cached rows are
+        // almost always the same rows — far better than a blank picker.
+        if(Array.isArray(cache[name]) && cache[name].length){
+          STATE.raw[name]=cache[name];
+          fromCache.push(name);
+        }else{
+          STATE.raw[name]=[];
+          failures.push(name);
+        }
       }
+      done++; progress();
     }
   }));
+
+  // Cache only what came back fresh this run, merged over what was already there — writing
+  // STATE.raw wholesale would re-save cached rows as if they were newly fetched and let a
+  // stale tab live forever.
+  const fresh = Object.assign({}, cache);
+  for(const [name] of entries){
+    if(!fromCache.includes(name) && !failures.includes(name)) fresh[name]=STATE.raw[name];
+  }
+  writeCache(fresh);
 
   try{
     buildModel();
@@ -443,6 +552,10 @@ async function syncSheet(){
     setStatus("err", `${entries.length-failures.length}/${entries.length} tabs · ${failures.join(", ")} unavailable · ${ts}`);
   }else if(!STATE.synced){
     setStatus("err", `Sheet reachable but empty — check it's still published to the web · ${ts}`);
+  }else if(fromCache.length){
+    // Not an error — the app is fully usable — but the rules in play are not necessarily
+    // the rules in the sheet right now, and that is worth saying out loud.
+    setStatus("warn", `Synced · ${fromCache.join(", ")} from last good copy (Google throttled) · ${ts}`);
   }else{
     setStatus("ok", `Synced ${STATE.templates.length} templates · ${STATE.products.length} products · ${ts}`);
   }
@@ -528,11 +641,17 @@ function fill(sel, items, fmt){
   items.forEach(it=>{ const o=document.createElement("option");
     const v = fmt?fmt(it):it; o.value=v.value; o.innerHTML=v.label; sel.appendChild(o); });
 }
+// Runs on every sync, not just the first, so it has to be idempotent: re-syncing must not
+// throw away the brief someone is halfway through. refreshTemplateSelect already keeps its
+// selection; the product picker did not, and because the angle list is rebuilt from the
+// product, losing the product silently lost the ticked angles with it.
 function populateUI(){
   refreshTemplateSelect();
 
   const pSel=document.getElementById("product");
+  const keep=pSel.value;
   fill(pSel, STATE.products, p=>({value:p,label:p}));
+  if(keep && [...pSel.options].some(o=>o.value===keep)) pSel.value=keep;
   updateProblems();
   updateEvidence();
 }
@@ -633,10 +752,18 @@ function updateProblems(){
   const prod=val("product");
   const list=(STATE.problemsByProduct[prod]||[]);
   const el=document.getElementById("problemList");
+  // A re-sync re-renders this list for the product that is already selected. Ticks the user
+  // made are their answer to "which angles", so carry them over — but only when the product
+  // is unchanged. Actually switching product is a different question, and gets the ★
+  // defaults back.
+  const same = el.dataset.product===prod;
+  const wasChecked = same ? new Set(selectedProblems()) : null;
+  el.dataset.product = prod;
   if(!list.length){ el.innerHTML='<div class="none">(no problems listed for this product)</div>'; return; }
   // primary angles (★) are pre-checked as a sensible default; any combination can be picked or cleared
+  const checked = x => wasChecked ? wasChecked.has(x.problem) : x.main;
   el.innerHTML = list.map(x=>
-    `<label><input type="checkbox" class="problem-cb" value="${esc(x.problem)}"${x.main?" checked":""}>`
+    `<label><input type="checkbox" class="problem-cb" value="${esc(x.problem)}"${checked(x)?" checked":""}>`
     +`<span>${esc(x.problem)}${x.main?' <span class="star">★</span>':''}</span></label>`
   ).join("");
   el.querySelectorAll(".problem-cb").forEach(cb=>cb.onchange=updateEvidence);
