@@ -14,9 +14,13 @@ import { COPY_SCHEMA, SIMPLE_SCHEMA } from '../lib/tools.js';
 export const maxDuration = 60;
 
 const SCHEMAS = { page: COPY_SCHEMA, simple: SIMPLE_SCHEMA };
-// Simple mode returns three short strings; a page returns the whole composition plus every
-// scoring layer. Sizing them the same would just pay for headroom nothing uses.
-const MAX_TOKENS = { page: 16000, simple: 6000 };
+// Both get the same 16k ceiling. Simple mode's *copy* is three short strings, but the
+// response around it is not: goal_read, a full draft, the self-critique, goal_fit, a
+// copy_checks row per rule — and max_tokens covers thinking as well as the answer, so an
+// adaptive-thinking model can spend thousands of tokens before the first field is written.
+// A smaller cap here only bought truncation. The headroom is free: unused tokens aren't
+// generated, and the binding limit is the 60s function ceiling, not the token count.
+const MAX_TOKENS = { page: 16000, simple: 16000 };
 
 export default async function handler(req, res){
   if (req.method !== 'POST'){ res.status(405).json({ error: 'Method not allowed' }); return; }
